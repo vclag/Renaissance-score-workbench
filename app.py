@@ -631,6 +631,105 @@ def score_to_download_bytes(score):
         tmp_path.unlink(missing_ok=True)
 
 
+def _compress_multimeasure_rests(score, min_run=2):
+    """**NOT CURRENTLY WIRED INTO THE PIPELINE -- do not call this from
+    run_pipeline/_annotate_crim_piece without re-reading this warning
+    first.** Built and verified to work correctly at the MusicXML
+    level (confirmed real, correct `<measure-style><multiple-rest>`
+    output, real page-count reduction: Josquin's 24-voice "Qui habitat
+    in adjutorio altissimi" dropped from 50 to 37 Verovio-rendered
+    pages, -26%) -- but wiring it into every export triggered a
+    SEVERE, reproducible Verovio rendering crash: `[Error] Staff @n=
+    'X' for rendering control event tie ... not found`, hanging/
+    killing the native renderer before it finishes a single page.
+    Reproduced on a normal, previously-solid 5-voice Palestrina piece
+    (Agnus_00), not just the extreme canon that prompted this -- a
+    systemic risk across the corpus, not an isolated edge case. Root
+    cause not found: the generated MusicXML is standard and correct
+    (checked directly), so this looks like a genuine bug in Verovio's
+    own C++ tie-rendering path when it interacts with a compressed
+    rest run nearby, not a mistake in this function's own output --
+    but that's not independently confirmed against Verovio's own
+    source, just the most likely explanation given what was checked.
+    Reverted from the live pipeline for safety; kept here, unused, as
+    a working implementation for whoever picks this back up -- fix (or
+    at least isolate/avoid) the tie interaction before ever wiring this
+    back in.
+
+    Consecutive whole-measure rests in one voice get collapsed into a
+    single 'N measures rest' notation symbol -- standard, universal
+    engraving practice (any real notation program respects it; this is
+    NOT a Verovio-only trick) via music21's own `spanner.
+    MultiMeasureRest`, which `m21ToXml.py` already translates into
+    MusicXML's own `<measure-style><multiple-rest>` element -- confirmed
+    directly, not assumed, against Verovio's own renderer too: an
+    isolated test (5 consecutive whole rests + 1 real note in one part)
+    rendered as 2 visual measures instead of 6, with a genuine
+    'multiRest' element present in the output SVG.
+
+    Prompted by a user question ("qui habitat wouldn't be so many pages
+    [if silent voices didn't draw blank measures]" -- a 24-voice canon
+    where each of the 6 real-time copies of one melody rests for long
+    stretches before its own entry). Two OTHER real approaches were
+    tried and rejected first, not skipped over:
+    - Verovio's own 'condense' option (the Dorico-style feature for
+      merging near-identical DOUBLING instruments onto shared staves) --
+      tested directly on this exact piece at every documented value
+      ('none'/'auto'/'encoded'): zero effect on page count or per-page
+      staff count. A different feature than what was needed here (it
+      targets doubling instruments sharing ONE staff, not hiding an
+      individual staff's own rest-only stretches), not a bug in how
+      this app was calling it.
+    - True per-system dynamic staff-hiding (what notation software
+      calls "hide empty staves") needs MEI-level <scoreDef>/@visible
+      toggling mid-score -- a real mechanism, but MusicXML (this app's
+      whole export/import pipeline, all the way to Verovio) has no
+      native equivalent, and building one would mean writing MEI
+      directly instead of MusicXML -- a much bigger architecture change
+      than this fix, not pursued.
+
+    Only collapses a measure that is EXACTLY one whole-measure rest and
+    nothing else -- checked via the measure's own direct note/rest
+    count (a single Rest, no Note) AND that it carries no Expression
+    (TextExpression/RehearsalMark) of its own -- deliberately
+    conservative, so this can never swallow a real annotation (e.g. a
+    section-boundary RehearsalMark sitting on an otherwise-silent
+    measure stays its own un-compressed measure, never hidden inside a
+    rest glyph). `min_run=2`: even 2 consecutive rest measures becoming
+    one small "2" marking is a real, standard compression, not gated to
+    runs of 3+.
+
+    Applied directly to the SAME score object both "Download
+    MusicXML"/"Download annotated MusicXML" and the PDF export use --
+    unlike _strip_phantom_verse_text, this loses nothing (every
+    <measure> stays in the file; MultiMeasureRest only changes how a
+    compliant reader DRAWS them), so there's no reason to keep it
+    PDF-only or gate it on voice count -- it's a pure improvement for
+    ANY piece with 2+ consecutive rest measures in any one voice, run
+    unconditionally on every export, not a user-facing toggle.
+    """
+    import copy
+    from music21 import spanner, expressions
+    score = copy.deepcopy(score)
+    for part in score.parts:
+        run = []
+
+        def _flush():
+            if len(run) >= min_run:
+                part.insert(0, spanner.MultiMeasureRest(*run, useSymbols=False))
+            run.clear()
+
+        for m in part.getElementsByClass('Measure'):
+            notes_and_rests = list(m.notesAndRests)
+            has_expression = bool(m.getElementsByClass(expressions.Expression))
+            if len(notes_and_rests) == 1 and notes_and_rests[0].isRest and not has_expression:
+                run.append(notes_and_rests[0])
+            else:
+                _flush()
+        _flush()
+    return score
+
+
 def _strip_phantom_verse_text(score):
     """Some of this corpus's Renaissance-madrigal Finale/Dolet exports
     encode a SECOND stanza of poetry as free-floating <direction>/<words>
