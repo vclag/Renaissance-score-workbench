@@ -734,6 +734,44 @@ one of Josquin's most celebrated demonstrations of pure contrapuntal
 technique (cited via the New Josquin Edition, `NJE 18.8`, this file's
 own source).
 
+## More download formats: MEI and MIDI
+
+Prompted by the user pointing at the Josquin Research Project's own
+per-work pages (e.g. `josquin.stanford.edu/work/?id=Bru2012`), which
+offer a piece in many formats — PDF, MIDI, Humdrum, MuseData,
+MusicXML, MEI, MP3, and more — not just the MusicXML/PDF this app
+offered before. Checked every format on that list for real feasibility
+here rather than assuming they'd all transfer:
+
+- **MEI** and **MIDI** — added. Both come from Verovio (already a
+  dependency, via the same MusicXML → toolkit pipeline the PDF export
+  already uses) — `getMEI()`/`renderToMIDI()`. Confirmed directly: the
+  MEI keeps this app's own annotation colors (e.g. cadence red), and
+  the MIDI decodes to a genuine file (`MThd` magic bytes). Both
+  single-piece (`show_result`, built eagerly alongside the MusicXML
+  button — unlike the PDF's "Build" gate, neither needs a per-page
+  render loop, so there's no real cost to gate) and Browse's bulk
+  downloads (own ZIP + own cap each, `BULK_MEI_MAX_MATCHES`/
+  `BULK_MIDI_MAX_MATCHES = 20`, from a real if smaller benchmark than
+  the original three formats' own — see that constant's own comment).
+- **Humdrum kern** — tried, **rejected**. Also reachable via Verovio
+  (`getMEI()` then `convertMEIToHumdrum()`), but produced real
+  `measure N staff M is overfilled` duration-mismatch errors on a
+  normal, already-working piece (Agnus_00) — not a rare edge case, a
+  correctness problem on ordinary output. Not shipped until that's
+  understood; better to offer nothing than a file with silently wrong
+  rhythm.
+- **MP3** — descoped, not attempted. Would need real audio synthesis
+  (a soundfont + synthesizer, e.g. fluidsynth) — no such capability
+  exists in this environment (checked directly: no `fluidsynth`/
+  `midi2audio` Python package, no `fluidsynth`/`timidity` binary), and
+  adding one would be a heavier, riskier dependency than this app's own
+  past rejection of a LilyPond system-binary dependency already argued
+  against (see "How it works, briefly" above).
+- **MuseData, NoteArray, JSON Piano Roll** — JRP's own bespoke/legacy
+  formats, built for their own visualization tools; not something this
+  app's pipeline produces or has a reason to.
+
 ## Credits & licensing
 
 *(The same content is also in the app itself, in the "ℹ️ Credits & data
