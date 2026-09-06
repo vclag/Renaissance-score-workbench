@@ -780,45 +780,20 @@ def _strip_phantom_verse_text(score):
     return score
 
 
-def score_to_pdf_bytes(score):
-    """PDF export via Verovio -- replaces an earlier attempt that went
-    through music21's own LilyPond backend (score.write('lily.pdf')).
-    That path had two real, confirmed problems, not just a style
-    preference: every cadential note rendered in the SAME red regardless
-    of which analysis actually colored it, and the cadence-type text
-    labels (TextExpression) were silently dropped entirely -- music21's
-    LilyPond translator re-derives its own from-scratch .ly markup from
-    the Score object, and has real gaps in that translation. It also
-    could crash outright on a zero-duration Note/Rest/Chord already
-    present in some piece's own encoding (a separate, real bug in that
-    translation layer, unrelated to this app's own annotation).
-
-    Verovio sidesteps all of that by reading the SAME already-correct
-    MusicXML the "Download MusicXML" button offers (via
-    score_to_download_bytes) -- the exact <notehead color="..."> and
-    <words> content MuseScore/Finale/Dorico already display correctly --
-    instead of re-deriving its own notation from the music21 object
-    model. Confirmed directly on a real annotated piece: the exact color
-    used for cadence notes (#CC3333) and the literal label text
-    ("Authentic -> G") both come through correctly in Verovio's output,
-    nothing else tinted. It's also a strictly simpler dependency: pure
-    pip packages (verovio/svglib/reportlab), no system binary and no
-    packages.txt entry, unlike LilyPond -- and crim_intervals already
-    depends on verovio itself for its own verovioCadences()/
-    verovioPrintExample() Jupyter helpers, so this isn't a new library
-    to the project, just a new use of one already installed.
-
-    Verovio only renders to SVG, one page at a time, not directly to
-    PDF -- so each page is converted to a reportlab Drawing (svglib) and
-    drawn onto its own page of one PDF via reportlab's own vector
-    renderer (renderPDF, not the raster renderPM path -- that needs a
-    native rlPyCairo/PIL backend this environment doesn't have, and
-    isn't needed for a vector format like PDF anyway, confirmed directly).
+def _load_verovio_for_score(score):
+    """Shared setup for every Verovio-based export (PDF, MEI, MIDI) --
+    factored out once three formats needed the identical sequence,
+    rather than tripling it. Strips this corpus's known phantom-verse-
+    text measures (see _strip_phantom_verse_text's own docstring --
+    applies just as much to MEI/MIDI as to the PDF, since all three go
+    through the same Verovio layout engine), converts to MusicXML,
+    loads it into a fresh Verovio toolkit, and applies the one layout
+    option (adjustPageHeight) confirmed to matter for this repertoire.
+    Raises RuntimeError with Verovio's own diagnostic on parse failure
+    -- not a new failure mode, the same one score_to_pdf_bytes always
+    surfaced, just no longer duplicated.
     """
     import verovio
-    from svglib.svglib import svg2rlg
-    from reportlab.graphics import renderPDF
-    from reportlab.pdfgen import canvas as pdf_canvas
 
     # Real, confirmed root cause of "Verovio couldn't parse" recurring
     # across arbitrary, otherwise-completely-normal pieces, found from the
@@ -862,6 +837,81 @@ def score_to_pdf_bytes(score):
     # directly to be the cause of the "huge edge" complaint: at that scale,
     # content occupies a small fraction of the page relative to its margins.
     tk.setOptions({"adjustPageHeight": True})
+    return tk
+
+
+def score_to_mei_bytes(score):
+    """MEI export via Verovio -- same MusicXML -> Verovio pipeline as
+    score_to_pdf_bytes (music21 has no MEI *writer* at all, only a
+    reader, so Verovio -- which converts MusicXML to its own internal
+    MEI-like representation as a normal part of laying out the PDF --
+    is the only thing in this app's stack that can produce one).
+    Confirmed directly: this MEI carries the SAME annotation colors
+    (e.g. cadence red, #CC3333) as the PDF, since `getMEI()` reads back
+    the identical loaded/laid-out score, not a second, separate,
+    color-blind re-export.
+    """
+    tk = _load_verovio_for_score(score)
+    return tk.getMEI().encode('utf-8')
+
+
+def score_to_midi_bytes(score):
+    """MIDI export via Verovio -- reuses the exact same already-
+    verified MusicXML -> Verovio pipeline as the PDF/MEI exports above
+    (one toolkit, one loadData call) rather than routing through
+    music21's own separate MIDI writer, a genuinely independent code
+    path this app doesn't otherwise exercise at all. `renderToMIDI()`
+    (no 'File' suffix) returns a base64-encoded string in this binding
+    version -- confirmed directly (decodes to a real MIDI file, magic
+    bytes 'MThd') -- so this just base64-decodes it, no temp file
+    needed the way score_to_download_bytes/score_to_pdf_bytes require
+    for music21's own file-only writer.
+    """
+    import base64
+    tk = _load_verovio_for_score(score)
+    return base64.b64decode(tk.renderToMIDI())
+
+
+def score_to_pdf_bytes(score):
+    """PDF export via Verovio -- replaces an earlier attempt that went
+    through music21's own LilyPond backend (score.write('lily.pdf')).
+    That path had two real, confirmed problems, not just a style
+    preference: every cadential note rendered in the SAME red regardless
+    of which analysis actually colored it, and the cadence-type text
+    labels (TextExpression) were silently dropped entirely -- music21's
+    LilyPond translator re-derives its own from-scratch .ly markup from
+    the Score object, and has real gaps in that translation. It also
+    could crash outright on a zero-duration Note/Rest/Chord already
+    present in some piece's own encoding (a separate, real bug in that
+    translation layer, unrelated to this app's own annotation).
+
+    Verovio sidesteps all of that by reading the SAME already-correct
+    MusicXML the "Download MusicXML" button offers (via
+    score_to_download_bytes) -- the exact <notehead color="..."> and
+    <words> content MuseScore/Finale/Dorico already display correctly --
+    instead of re-deriving its own notation from the music21 object
+    model. Confirmed directly on a real annotated piece: the exact color
+    used for cadence notes (#CC3333) and the literal label text
+    ("Authentic -> G") both come through correctly in Verovio's output,
+    nothing else tinted. It's also a strictly simpler dependency: pure
+    pip packages (verovio/svglib/reportlab), no system binary and no
+    packages.txt entry, unlike LilyPond -- and crim_intervals already
+    depends on verovio itself for its own verovioCadences()/
+    verovioPrintExample() Jupyter helpers, so this isn't a new library
+    to the project, just a new use of one already installed.
+
+    Verovio only renders to SVG, one page at a time, not directly to
+    PDF -- so each page is converted to a reportlab Drawing (svglib) and
+    drawn onto its own page of one PDF via reportlab's own vector
+    renderer (renderPDF, not the raster renderPM path -- that needs a
+    native rlPyCairo/PIL backend this environment doesn't have, and
+    isn't needed for a vector format like PDF anyway, confirmed directly).
+    """
+    from svglib.svglib import svg2rlg
+    from reportlab.graphics import renderPDF
+    from reportlab.pdfgen import canvas as pdf_canvas
+
+    tk = _load_verovio_for_score(score)
     page_count = tk.getPageCount()
 
     buffer = io.BytesIO()
@@ -1125,6 +1175,37 @@ def show_result(annotated_score, stats, filename_stem, include_cadences=False, i
         mime="application/vnd.recordare.musicxml+xml",
         type="primary",
     )
+
+    # MEI and MIDI, via Verovio (see score_to_mei_bytes/score_to_midi_bytes's
+    # own docstrings) -- built EAGERLY here, unlike the PDF below: both are
+    # one Verovio call each (getMEI()/renderToMIDI()), no per-page SVG
+    # render loop, so there's no real cost to gate behind an extra click
+    # the way a many-page PDF genuinely needs. Wrapped in its own try/except
+    # so a Verovio parse failure for either one doesn't take down the
+    # MusicXML download above (already built and shown) or the other of
+    # the two -- each fails independently, with its own specific message.
+    try:
+        mei_bytes = score_to_mei_bytes(annotated_score)
+        st.download_button(
+            "Download annotated MEI" if annotated else "Download MEI",
+            data=mei_bytes,
+            file_name=f"{download_name}_annotated.mei" if annotated else f"{download_name}.mei",
+            mime="application/xml",
+            key=f"{key_prefix}_{filename_stem}_mei_download",
+        )
+    except Exception as exc:
+        st.caption(f"ⓘ Couldn't build an MEI file for this piece ({exc}).")
+    try:
+        midi_bytes = score_to_midi_bytes(annotated_score)
+        st.download_button(
+            "Download MIDI",
+            data=midi_bytes,
+            file_name=f"{download_name}.mid",
+            mime="audio/midi",
+            key=f"{key_prefix}_{filename_stem}_midi_download",
+        )
+    except Exception as exc:
+        st.caption(f"ⓘ Couldn't build a MIDI file for this piece ({exc}).")
 
     # PDF, via Verovio -- see score_to_pdf_bytes()'s own docstring. Built
     # only on an explicit click (not automatically alongside the MusicXML
@@ -2700,21 +2781,39 @@ def _import_piece_by_collection(collection, native_ref):
 BULK_XML_MAX_MATCHES = 25
 BULK_PDF_MAX_MATCHES = 8
 BULK_CSV_MAX_MATCHES = 40
+# MEI/MIDI added later, on a smaller/less rigorous benchmark than the
+# three above (5 short single-movement Palestrina pieces, not the
+# original 25-piece mixed sample) -- combined (both formats, one after
+# the other, each paying its own full Verovio parse) came to 7.74s/
+# piece, noticeably cheaper per piece than PDF's own 20.28s/piece
+# above, mechanistically expected: MEI/MIDI skip PDF's per-page SVG-
+# render + reportlab-drawing loop entirely (see score_to_mei_bytes/
+# score_to_midi_bytes), the actual expensive part of that number. A
+# real, if smaller-sample, measurement -- not guessed -- but treat this
+# cap as more provisional than the three above until it's re-checked
+# against a proper mixed sample.
+BULK_MEI_MAX_MATCHES = 20
+BULK_MIDI_MAX_MATCHES = 20
 
 
-def _bulk_pdf_zip_bytes(matches, include_cadences, include_ptypes, include_homorhythm, progress_callback=None):
-    """Runs the checked analyses on every match (same annotate_by_collection
-    call the CSV export and single-piece Analyze both already use) and
-    renders each one to an annotated PDF via score_to_pdf_bytes -- the same
-    function and same Verovio path the single-piece "Download PDF" button
-    uses, just looped and zipped instead of offered one at a time. Returns
-    (zip_bytes, failed) where `failed` is a list of (label, reason) for any
-    piece that couldn't be fetched/analyzed/rendered -- skipped rather than
-    aborting the whole batch, same convention as _bulk_zip_bytes/
-    _bulk_analysis_csv_bytes. progress_callback(index, total, label), if
+def _bulk_export_zip_bytes(matches, include_cadences, include_ptypes, include_homorhythm, export_fn, extension, progress_callback=None):
+    """Shared implementation behind _bulk_pdf_zip_bytes/_bulk_mei_zip_bytes/
+    _bulk_midi_zip_bytes -- these differ only in which single-piece export
+    function they call and what extension the result gets, so that's
+    factored out here rather than tripled. Runs the checked analyses on
+    every match (same annotate_by_collection call the CSV export and
+    single-piece Analyze both already use) and hands the resulting score to
+    `export_fn` (one of score_to_pdf_bytes/score_to_mei_bytes/score_to_
+    midi_bytes -- each already does its own Verovio call, same as the
+    single-piece download buttons use) to get that one format's bytes.
+    Returns (zip_bytes, failed) where `failed` is a list of (label, reason)
+    for any piece that couldn't be fetched/analyzed/exported -- skipped
+    rather than aborting the whole batch, same convention as every other
+    bulk export in this app. progress_callback(index, total, label), if
     given, is called right before each piece starts."""
     buf = io.BytesIO()
     failed = []
+    annotated = include_cadences or include_ptypes or include_homorhythm
     with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
         for i, (label, collection, native_ref) in enumerate(matches):
             if progress_callback:
@@ -2726,14 +2825,47 @@ def _bulk_pdf_zip_bytes(matches, include_cadences, include_ptypes, include_homor
                 )
                 if error:
                     raise RuntimeError(error)
-                pdf_bytes = score_to_pdf_bytes(score)
+                file_bytes = export_fn(score)
             except Exception as e:
                 failed.append((label, str(e)))
                 continue
             stem = _rich_filename_stem(label, _browse_piece_filename_stem(collection, native_ref))
-            annotated = include_cadences or include_ptypes or include_homorhythm
-            zf.writestr(f'{stem}_annotated.pdf' if annotated else f'{stem}.pdf', pdf_bytes)
+            zf.writestr(f'{stem}_annotated.{extension}' if annotated else f'{stem}.{extension}', file_bytes)
     return buf.getvalue(), failed
+
+
+def _bulk_pdf_zip_bytes(matches, include_cadences, include_ptypes, include_homorhythm, progress_callback=None):
+    """PDF, via score_to_pdf_bytes -- the same function and same Verovio
+    path the single-piece "Download PDF" button uses, just looped and
+    zipped instead of offered one at a time. See _bulk_export_zip_bytes
+    for the shared mechanics."""
+    return _bulk_export_zip_bytes(
+        matches, include_cadences, include_ptypes, include_homorhythm,
+        score_to_pdf_bytes, 'pdf', progress_callback,
+    )
+
+
+def _bulk_mei_zip_bytes(matches, include_cadences, include_ptypes, include_homorhythm, progress_callback=None):
+    """MEI, via score_to_mei_bytes -- same idea as _bulk_pdf_zip_bytes,
+    different single-piece export function and file extension."""
+    return _bulk_export_zip_bytes(
+        matches, include_cadences, include_ptypes, include_homorhythm,
+        score_to_mei_bytes, 'mei', progress_callback,
+    )
+
+
+def _bulk_midi_zip_bytes(matches, include_cadences, include_ptypes, include_homorhythm, progress_callback=None):
+    """MIDI, via score_to_midi_bytes -- same idea as _bulk_pdf_zip_bytes,
+    different single-piece export function and file extension. 'annotated'
+    has no visual meaning for MIDI (no colors/text survive into it -- see
+    score_to_midi_bytes' own docstring), but the filename suffix still
+    reflects whether analyses were requested, same convention as every
+    other bulk export, so a batch run twice (once plain, once annotated)
+    doesn't silently overwrite one with the other."""
+    return _bulk_export_zip_bytes(
+        matches, include_cadences, include_ptypes, include_homorhythm,
+        score_to_midi_bytes, 'mid', progress_callback,
+    )
 
 
 def _bulk_analysis_csv_bytes(matches, include_cadences, include_ptypes, include_homorhythm, progress_callback=None):
@@ -3367,7 +3499,7 @@ with tab_browse:
                      "load with pandas and fetch/parse in your own script.",
             )
 
-            with st.expander(f"📦 Bulk downloads for all {len(matches)} match(es) -- MusicXML, PDF, or analysis data"):
+            with st.expander(f"📦 Bulk downloads for all {len(matches)} match(es) -- MusicXML, PDF, MEI, MIDI, or analysis data"):
                 st.caption(
                     "**Which analyses to include** -- leave everything unchecked below for "
                     "plain, unmodified files; check any of the three to get annotated ones "
@@ -3458,6 +3590,96 @@ with tab_browse:
                         file_name="browse_results_pdfs.zip",
                         mime="application/zip",
                         key="browse_pdf_zip_download",
+                        type="primary",
+                    )
+
+                st.markdown("**MEI**")
+                st.caption(
+                    "Same annotation colors/labels as the PDF above, in the MEI encoding "
+                    "format instead -- music21 has no MEI writer of its own, so this comes "
+                    "from the same Verovio conversion the PDF uses (see score_to_mei_bytes)."
+                )
+                if len(matches) > BULK_MEI_MAX_MATCHES:
+                    st.caption(
+                        f"Works for up to {BULK_MEI_MAX_MATCHES} matches at once (this search "
+                        f"has {len(matches)}) -- narrow the search to enable it."
+                    )
+                elif st.button(
+                    f"🎼 Build a ZIP of all {len(matches)} piece(s) as {'annotated ' if bulk_annotated else 'plain '}MEI",
+                    key="browse_mei_zip_build", type="primary",
+                ):
+                    progress_bar = st.progress(0.0)
+                    status = st.empty()
+
+                    def _update_mei_zip_progress(i, total, label):
+                        progress_bar.progress(i / total)
+                        status.caption(f"Rendering {i + 1}/{total}: {label}")
+
+                    with st.spinner(_random_loading_message()):
+                        mei_zip_bytes, failed = _bulk_mei_zip_bytes(
+                            matches, bulk_cadences, bulk_ptypes, bulk_hr,
+                            progress_callback=_update_mei_zip_progress,
+                        )
+                    progress_bar.progress(1.0)
+                    status.empty()
+
+                    if failed:
+                        detail = "; ".join(f"{label} ({reason})" for label, reason in failed[:5])
+                        st.warning(
+                            f"{len(failed)} of {len(matches)} piece(s) couldn't be included and were "
+                            f"skipped: {detail}" + (", ..." if len(failed) > 5 else "")
+                        )
+                    st.download_button(
+                        f"Download ZIP ({len(matches) - len(failed)} MEI file(s))",
+                        data=mei_zip_bytes,
+                        file_name="browse_results_mei.zip",
+                        mime="application/zip",
+                        key="browse_mei_zip_download",
+                        type="primary",
+                    )
+
+                st.markdown("**MIDI**")
+                st.caption(
+                    "Playback only -- no note colors or text labels survive into MIDI, so "
+                    "there's no 'plain vs. annotated' distinction here the way there is for "
+                    "every format above; the checked analyses above only affect the filename."
+                )
+                if len(matches) > BULK_MIDI_MAX_MATCHES:
+                    st.caption(
+                        f"Works for up to {BULK_MIDI_MAX_MATCHES} matches at once (this search "
+                        f"has {len(matches)}) -- narrow the search to enable it."
+                    )
+                elif st.button(
+                    f"🎹 Build a ZIP of all {len(matches)} piece(s) as MIDI",
+                    key="browse_midi_zip_build", type="primary",
+                ):
+                    progress_bar = st.progress(0.0)
+                    status = st.empty()
+
+                    def _update_midi_zip_progress(i, total, label):
+                        progress_bar.progress(i / total)
+                        status.caption(f"Rendering {i + 1}/{total}: {label}")
+
+                    with st.spinner(_random_loading_message()):
+                        midi_zip_bytes, failed = _bulk_midi_zip_bytes(
+                            matches, bulk_cadences, bulk_ptypes, bulk_hr,
+                            progress_callback=_update_midi_zip_progress,
+                        )
+                    progress_bar.progress(1.0)
+                    status.empty()
+
+                    if failed:
+                        detail = "; ".join(f"{label} ({reason})" for label, reason in failed[:5])
+                        st.warning(
+                            f"{len(failed)} of {len(matches)} piece(s) couldn't be included and were "
+                            f"skipped: {detail}" + (", ..." if len(failed) > 5 else "")
+                        )
+                    st.download_button(
+                        f"Download ZIP ({len(matches) - len(failed)} MIDI file(s))",
+                        data=midi_zip_bytes,
+                        file_name="browse_results_midi.zip",
+                        mime="application/zip",
+                        key="browse_midi_zip_download",
                         type="primary",
                     )
 
