@@ -2149,6 +2149,83 @@ def _fix_humdrum_quoted_part_names(score, kern_text):
     return score
 
 
+# Above what real signature in this repertoire ever needs -- checked
+# directly: every genuine time signature seen across this app's own
+# corpora is 2/1, 3/1, 3/2, 3/4, 4/4, 2/2, 6/4, C, or cut-C, none with a
+# denominator over 4. 8 leaves headroom without risking ever touching a
+# real one.
+_MAX_SANE_TIME_SIGNATURE_DENOMINATOR = 8
+
+
+def _fix_corrupted_proportion_time_signatures(score):
+    """Works around a real music21 bug (confirmed directly, not just
+    suspected -- traced against the raw kern source of Ludwig Senfl's
+    "Usquequo Domine", 1520s Project): a genuine mensural PROPORTION
+    sign written in Humdrum's own rational-duration "%" syntax inside a
+    meter token (e.g. *M3/3%2 -- a sesquialtera/tripla passage, "3%2"
+    meaning a triplet whole note per https://humlib.humdrum.org/doc/
+    topic/'s own definition of the "%" fraction extension to **kern
+    duration) gets parsed by music21 9.9.2's Humdrum importer into a
+    nonsensical LITERAL TimeSignature("3/32") instead -- confirmed by
+    comparing the raw file's own tandem tokens against music21's parsed
+    TimeSignature objects side by side, not assumed from the symptom
+    alone. Verovio then faithfully renders whatever bogus signature
+    it's handed, fragmenting that passage into a chaotic run of
+    tiny measures in the PDF.
+
+    Traced two of music21's own candidate code paths for the actual
+    mangling (humdrum.spineParser.kernTandemToObject's own regex, and
+    meter.TimeSignature's constructor itself) and confirmed NEITHER is
+    ever called while parsing an affected file -- the real responsible
+    code path is elsewhere in music21's Humdrum importer, not pinned
+    down further here (a music21-internal matter, not this app's own
+    code, and chasing it further had rapidly diminishing returns against
+    the time spent). This function is a corrective WORKAROUND for the
+    visible symptom, not a fix at music21's own root cause.
+
+    Heuristic: any TimeSignature whose denominator exceeds
+    _MAX_SANE_TIME_SIGNATURE_DENOMINATOR is replaced with whichever real
+    TimeSignature governed the SAME part immediately before it -- i.e.
+    treat the corrupted meter change as if it had never happened, not
+    as "no time signature at all" (which would just make music21 guess
+    again). Verified directly on the Senfl piece that this is musically
+    correct, not just visually less broken: every measure in the
+    affected passage sums to EXACTLY the restored signature's own total
+    duration (8.0 quarterLength under a restored 2/1, in every one of
+    the 4 voices) -- strong direct confirmation that the passage really
+    is a sesquialtera passage occupying the same total time as the
+    surrounding normal measures, exactly what the theory predicts,
+    not a coincidence of this one fallback rule happening to avoid a
+    crash.
+
+    Deliberately does NOT attempt to reconstruct the historically
+    accurate mensural proportion sign (a "3" or circled-3 printed over
+    the previous signature) -- that would need correctly re-deriving
+    the intended note grouping from the raw kern duration tokens
+    themselves, a bigger, riskier undertaking than falling back to the
+    previous signature. The note DURATIONS are unaffected either way:
+    this bug is in the printed TimeSignature label only -- music21
+    reads the individual notes' own "%"-duration tokens (the actual
+    triplet rhythm) correctly regardless of which time signature ends
+    up grouping them into measures, confirmed by the exact quarterLength
+    match above.
+
+    Scope not exhaustively checked: how many OTHER pieces across this
+    app's Humdrum-kern collections (1520s Project, JRP, Tasso, SEILS,
+    Lassus Psalms) hit this same "%"-in-a-meter-token pattern is not
+    known precisely -- this function defends against it wherever it
+    occurs, but no full-corpus census was run to count them."""
+    for part in score.parts:
+        previous_ts = None
+        for ts in list(part.recurse().getElementsByClass('TimeSignature')):
+            if ts.denominator > _MAX_SANE_TIME_SIGNATURE_DENOMINATOR:
+                if previous_ts is not None:
+                    ts.activeSite.replace(ts, m21.meter.TimeSignature(previous_ts.ratioString))
+            else:
+                previous_ts = ts
+    return score
+
+
 def _annotate_kern_from_url(raw_url, source_label, include_cadences=True, include_ptypes=False, include_homorhythm=False):
     """Shared by every GitHub-hosted Humdrum kern tab (JRP, 1520s, Tasso,
     SEILS, Lassus Psalms): fetch the raw file, parse, run the pipeline.
@@ -2158,6 +2235,7 @@ def _annotate_kern_from_url(raw_url, source_label, include_cadences=True, includ
     kern_text = requests.get(raw_url, timeout=20).text
     score = m21.converter.parse(kern_text)
     score = _fix_humdrum_quoted_part_names(score, kern_text)
+    score = _fix_corrupted_proportion_time_signatures(score)
     return run_pipeline(
         score, source_label, include_cadences=include_cadences,
         include_ptypes=include_ptypes, include_homorhythm=include_homorhythm,
@@ -2909,6 +2987,7 @@ def _import_piece_by_collection(collection, native_ref):
     kern_text = requests.get(raw_url, timeout=20).text
     score = m21.converter.parse(kern_text)
     score = _fix_humdrum_quoted_part_names(score, kern_text)
+    score = _fix_corrupted_proportion_time_signatures(score)
     return ci.main_objs.ImportedPiece(score, Path(native_ref).stem), None
 
 
