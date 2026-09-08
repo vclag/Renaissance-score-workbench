@@ -816,11 +816,21 @@ Full spike log, including every bug and every fix in detail:
 (a sibling thesis-project repo, not this one — the spike was run
 before the decision to integrate anything here was made).
 
-Deliberately scoped to search **within one piece only** for now, not
-across the whole corpus — cross-piece search (the paper's own headline
-use case: finding borrowed material between masses) is a real,
-larger follow-up, not attempted here yet (would need a corpus-wide
-indexing/performance strategy this first version doesn't have).
+**Cross-piece search (Browse only):** from a Browse search with more
+than one match, a second button — "🌐 Search all N matches" — runs the
+same query against every match's own score, not just the one currently
+open (up to `BULK_PATTERN_MAX_MATCHES` = 30 at once; narrow the search
+to enable it above that). Reuses `_import_piece_by_collection`, the
+same cheap "fetch/parse, skip CRIM's own cadence/ptype/homorhythm
+annotation" path the bulk analysis-CSV export already uses — pattern
+search doesn't need any of that. Benchmarked on 10 real music21-bundled
+Palestrina pieces (P1, an 11-note query): ~1.1s/piece average,
+dominated by the parse itself, not by PatternFinder's own matching —
+smaller/less systematic than the app's original 25-piece benchmark,
+same caveat as the MEI/MIDI caps above. Every dedicated single-corpus
+tab (music21, CRIM, JRP, ...) still only searches its one open piece —
+only Browse has a multi-piece result list to search across in the
+first place.
 
 If PatternFinder isn't importable in some deployment (a real, disclosed
 risk of a git-only, non-PyPI dependency), `pattern_search.is_available()`

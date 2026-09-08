@@ -1050,7 +1050,7 @@ def _build_methods_blurb(include_cadences, include_ptypes, include_homorhythm):
     return ' '.join([_METHODS_BLURB_MUSIC21] + sentences)
 
 
-def show_result(annotated_score, stats, filename_stem, include_cadences=False, include_ptypes=False, include_homorhythm=False, key_prefix=None, download_name=None):
+def show_result(annotated_score, stats, filename_stem, include_cadences=False, include_ptypes=False, include_homorhythm=False, key_prefix=None, download_name=None, corpus_matches=None):
     """Reports whatever run_pipeline()/_annotate_crim_piece() actually
     did (cadences/ptypes/homorhythm are all optional now -- see
     run_pipeline's docstring) and offers the resulting file for
@@ -1079,6 +1079,14 @@ def show_result(annotated_score, stats, filename_stem, include_cadences=False, i
     (composer, mass/collection title, movement) without needing to
     cross-reference back to the search that produced it -- the Upload
     tab (no such label to build one from) is the one caller that doesn't.
+
+    corpus_matches -- Browse's own `matches` list ([(label, collection,
+    native_ref), ...]), passed through ONLY by the Browse tab (every
+    other caller leaves it None): when given (and longer than one
+    piece), the pattern-search expander below shows a second button to
+    search the SAME query across every match, not just this one piece
+    -- see _bulk_pattern_search(). None elsewhere because no other tab
+    has a multi-piece result list to search across in the first place.
     """
     key_prefix = key_prefix or filename_stem
     download_name = download_name or filename_stem
@@ -1308,6 +1316,11 @@ def show_result(annotated_score, stats, filename_stem, include_cadences=False, i
                 "P1/P2 algorithms, the only two independently verified to work; see "
                 "this app's own `pattern_search.py` module docstring for why not the "
                 "other five the paper describes."
+                + (
+                    f" From Browse, you can also search this same pattern across all "
+                    f"{len(corpus_matches)} matches at once, not just this one piece."
+                    if corpus_matches is not None and len(corpus_matches) > 1 else ""
+                )
             )
             part_names = [p.partName or f'Voice {i + 1}' for i, p in enumerate(annotated_score.parts)]
             pattern_part_idx = st.selectbox(
@@ -1345,30 +1358,78 @@ def show_result(annotated_score, stats, filename_stem, include_cadences=False, i
                     )
                 if query_end < query_start:
                     st.caption("ⓘ Last measure must be at or after the first measure.")
-                elif st.button("Search", key=f"{key_prefix}_{filename_stem}_pattern_search"):
+                else:
                     query = ps.extract_query_from_measures(query_part, query_start, query_end)
+                    pattern_algo_code = 'P2' if pattern_algorithm.startswith("Approximate") else 'P1'
+                    pattern_algo_kwargs = {'mismatches': pattern_mismatches} if pattern_algo_code == 'P2' else {}
                     if len(list(query.notes)) < 2:
                         st.info("That range has fewer than 2 real notes in this voice -- nothing to search for.")
                     else:
-                        try:
-                            with st.spinner(_random_loading_message()):
-                                if pattern_algorithm.startswith("Approximate"):
-                                    occurrences = ps.find_pattern_occurrences(
-                                        query, annotated_score, algorithm='P2', mismatches=pattern_mismatches,
-                                    )
-                                else:
-                                    occurrences = ps.find_pattern_occurrences(query, annotated_score, algorithm='P1')
-                        except Exception as exc:
-                            st.error(f"Pattern search failed on this piece ({exc}).")
+                        # Corpus-wide search only offered when Browse handed
+                        # us its own multi-piece `matches` list AND there's
+                        # more than just this one piece in it -- see show_
+                        # result's own docstring for corpus_matches.
+                        show_corpus_search = corpus_matches is not None and len(corpus_matches) > 1
+                        if show_corpus_search:
+                            search_col1, search_col2 = st.columns(2)
                         else:
-                            if not occurrences:
-                                st.info("No matches found (besides, potentially, the query itself).")
+                            search_col1, search_col2 = st.container(), None
+                        if search_col1.button("Search this piece", key=f"{key_prefix}_{filename_stem}_pattern_search"):
+                            try:
+                                with st.spinner(_random_loading_message()):
+                                    occurrences = ps.find_pattern_occurrences(
+                                        query, annotated_score, algorithm=pattern_algo_code, **pattern_algo_kwargs,
+                                    )
+                            except Exception as exc:
+                                st.error(f"Pattern search failed on this piece ({exc}).")
                             else:
-                                st.success(f"{len(occurrences)} occurrence(s) found:")
-                                for occ in occurrences:
-                                    measures = occ['measures']
-                                    measure_label = f"measures {measures[0]}-{measures[1]}" if measures else "measure unknown"
-                                    st.caption(f"**{measure_label}**: {' '.join(occ['notes'])}")
+                                if not occurrences:
+                                    st.info("No matches found (besides, potentially, the query itself).")
+                                else:
+                                    st.success(f"{len(occurrences)} occurrence(s) found:")
+                                    for occ in occurrences:
+                                        measures = occ['measures']
+                                        measure_label = f"measures {measures[0]}-{measures[1]}" if measures else "measure unknown"
+                                        st.caption(f"**{measure_label}**: {' '.join(occ['notes'])}")
+                        if show_corpus_search:
+                            n = len(corpus_matches)
+                            if n > BULK_PATTERN_MAX_MATCHES:
+                                search_col2.caption(
+                                    f"Works for up to {BULK_PATTERN_MAX_MATCHES} matches at once "
+                                    f"(this search has {n}) -- narrow the search to enable it."
+                                )
+                            elif search_col2.button(f"🌐 Search all {n} matches", key=f"{key_prefix}_{filename_stem}_pattern_search_corpus"):
+                                progress_bar = st.progress(0.0)
+                                status = st.empty()
+
+                                def _update_pattern_progress(i, total, label):
+                                    progress_bar.progress(i / total)
+                                    status.caption(f"Searching {i + 1}/{total}: {label}")
+
+                                with st.spinner(_random_loading_message()):
+                                    corpus_results, corpus_failed = _bulk_pattern_search(
+                                        query, corpus_matches, algorithm=pattern_algo_code,
+                                        mismatches=pattern_mismatches, progress_callback=_update_pattern_progress,
+                                    )
+                                progress_bar.progress(1.0)
+                                status.empty()
+
+                                if corpus_failed:
+                                    detail = "; ".join(f"{lbl} ({reason})" for lbl, reason in corpus_failed[:5])
+                                    st.warning(
+                                        f"{len(corpus_failed)} of {n} piece(s) couldn't be searched and were "
+                                        f"skipped: {detail}" + (", ..." if len(corpus_failed) > 5 else "")
+                                    )
+                                if not corpus_results:
+                                    st.info("No occurrences found in any of the other pieces searched.")
+                                else:
+                                    st.success(f"Found in {len(corpus_results)} of {n} piece(s):")
+                                    for result in corpus_results:
+                                        with st.expander(f"{result['label']} -- {len(result['occurrences'])} occurrence(s)"):
+                                            for occ in result['occurrences']:
+                                                measures = occ['measures']
+                                                measure_label = f"measures {measures[0]}-{measures[1]}" if measures else "measure unknown"
+                                                st.caption(f"**{measure_label}**: {' '.join(occ['notes'])}")
 
 
 with st.expander("ℹ️ Credits & data sources"):
@@ -2887,6 +2948,17 @@ BULK_CSV_MAX_MATCHES = 40
 # against a proper mixed sample.
 BULK_MEI_MAX_MATCHES = 20
 BULK_MIDI_MAX_MATCHES = 20
+# Pattern search across matches -- benchmarked on 10 real music21-bundled
+# Palestrina pieces (7 resolved; 3 file IDs guessed wrong and correctly
+# raised/skipped, not counted), P1 algorithm, an 11-note query: 1.09s/
+# piece average including the corpus.parse() fetch itself (the dominant
+# cost, same as every other bulk export here that uses _import_piece_by_
+# collection -- PatternFinder's own matching is fast on these note
+# counts). Smaller/less systematic than the original 25-piece benchmark
+# above, same honesty caveat as MEI/MIDI's own cap comment: a real
+# measurement, not a guess, but revisit if it turns out too slow/fast in
+# practice. 30 targets a worst case under 2 minutes.
+BULK_PATTERN_MAX_MATCHES = 30
 
 
 def _bulk_export_zip_bytes(matches, include_cadences, include_ptypes, include_homorhythm, export_fn, extension, progress_callback=None):
@@ -3114,6 +3186,52 @@ BULK_ANALYSIS_DOWNLOAD_META = {
 }
 
 
+def _bulk_pattern_search(query, matches, algorithm='P1', mismatches=1, progress_callback=None):
+    """Runs pattern_search.find_pattern_occurrences(query, ...) against
+    EVERY match's own score, one piece at a time -- the cross-piece
+    counterpart to the single-piece "Find this melodic pattern elsewhere"
+    expander (which only searches the one currently open piece). Uses
+    _import_piece_by_collection (the cheap "just fetch/parse, no
+    cadences()/presentationTypes()/homorhythm() call" path _bulk_
+    analysis_csv_bytes already uses above) since pattern search needs
+    nothing from CRIM's own annotation -- only the raw music21 score
+    (piece.score).
+
+    Returns (results, failed):
+    - results: [{'label': ..., 'occurrences': [...]}] for every match
+      with >=1 occurrence found (pattern_search.find_pattern_occurrences'
+      own dict shape: {'notes': [...], 'measures': (first, last)}) --
+      matches with zero occurrences are simply absent, not included
+      with an empty list, so the caller doesn't need to filter again.
+    - failed: [(label, reason)] for any piece that couldn't be fetched
+      or searched -- same skip-don't-abort convention as every other
+      bulk function in this app.
+
+    progress_callback(index, total, label), if given, is called right
+    before each piece starts -- same signature as _bulk_export_zip_
+    bytes'/_bulk_analysis_csv_bytes' own callbacks.
+    """
+    import pattern_search as ps
+
+    results = []
+    failed = []
+    kwargs = {'mismatches': mismatches} if algorithm == 'P2' else {}
+    for i, (label, collection, native_ref) in enumerate(matches):
+        if progress_callback:
+            progress_callback(i, len(matches), label)
+        try:
+            piece, error = _import_piece_by_collection(collection, native_ref)
+            if error:
+                raise RuntimeError(error)
+            occurrences = ps.find_pattern_occurrences(query, piece.score, algorithm=algorithm, **kwargs)
+        except Exception as e:
+            failed.append((label, str(e)))
+            continue
+        if occurrences:
+            results.append({'label': label, 'occurrences': occurrences})
+    return results, failed
+
+
 # How many of Browse's matches populate the "Pick one" selectbox -- purely a
 # UI-rendering concern (Streamlit itself handles large dropdowns fine with
 # typeahead filtering), NOT a data limit: the CSV/ZIP exports always cover
@@ -3213,7 +3331,7 @@ def _random_fetch_message():
     return random.choice(_FETCH_LOADING_MESSAGES)
 
 
-def render_preview_and_annotate(collection, native_ref, piece_label, filename_stem, key_prefix=None):
+def render_preview_and_annotate(collection, native_ref, piece_label, filename_stem, key_prefix=None, corpus_matches=None):
     """Two-column Preview/Download buttons -- shared by every dedicated
     collection tab AND Browse (same layout, same underlying calls), so a
     given piece behaves identically no matter which tab you reach it
@@ -3226,7 +3344,11 @@ def render_preview_and_annotate(collection, native_ref, piece_label, filename_st
     confirmed directly earlier in this project), reusing e.g. 'crim' as
     the key from BOTH the CRIM tab and Browse (when a CRIM piece is
     selected there) would collide -- two different widgets can't share
-    one key in the same script run."""
+    one key in the same script run.
+
+    corpus_matches -- passed straight through to show_result() (see its
+    own docstring); only Browse has a multi-piece list to pass here, so
+    every other caller leaves this None."""
     key_prefix = key_prefix or collection
     # Cadences default to checked (this app's original, still-primary
     # feature); unchecking all three gives back a completely unmodified
@@ -3304,6 +3426,7 @@ def render_preview_and_annotate(collection, native_ref, piece_label, filename_st
             stored_score, stored_stats, filename_stem, include_cadences=stored_cad,
             include_ptypes=stored_pt, include_homorhythm=stored_hr, key_prefix=key_prefix,
             download_name=_rich_filename_stem(piece_label, filename_stem),
+            corpus_matches=corpus_matches,
         )
 
 
@@ -3837,7 +3960,7 @@ with tab_browse:
             browse_label = st.selectbox("Pick one", [m[0] for m in shown], key="browse_pick")
             _, collection, native_ref = next(m for m in shown if m[0] == browse_label)
             stem = _browse_piece_filename_stem(collection, native_ref)
-            render_preview_and_annotate(collection, native_ref, browse_label, stem, key_prefix='browse')
+            render_preview_and_annotate(collection, native_ref, browse_label, stem, key_prefix='browse', corpus_matches=matches)
 
     st.caption(
         "☁️ Composer word cloud across all ~4,300 pieces in this app, sized by piece count "
