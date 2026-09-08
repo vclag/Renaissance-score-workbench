@@ -8,5 +8,5 @@ verovio==5.5.0
 svglib==2.2.0
 reportlab==5.0.1
 pyyaml==6.0.3
-more-itertools==11.1.0
+more-itertools==8.7.0
 git+https://github.com/ELVIS-Project/PatternFinder.git@0254e05b63614e19d9a554379ca7a7fbbcdb69fd
