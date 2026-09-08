@@ -1408,31 +1408,14 @@ def show_result(annotated_score, stats, filename_stem, include_cadences=False, i
                         if show_corpus_search:
                             n = len(corpus_matches)
                             # No hard cap here (unlike the bulk export
-                            # buttons below, which block outright past their
-                            # own cap) -- per direct feedback, a time
-                            # estimate the user can decide against is
-                            # preferable to a wall that forces narrowing the
-                            # search first. Still worth a visible warning
-                            # past BULK_PATTERN_MAX_MATCHES pieces though,
-                            # using the same ~1.1s/piece benchmark the old
-                            # cap was set from (see that constant's own
-                            # comment) -- so someone about to kick off a
-                            # search over the (near-)full ~4,300-piece
-                            # corpus knows it could run well over an hour
-                            # before clicking, not partway through it.
-                            if n > BULK_PATTERN_MAX_MATCHES:
-                                est_seconds = n * 1.1
-                                est_label = (
-                                    f"~{est_seconds / 60:.0f} min" if est_seconds >= 90
-                                    else f"~{est_seconds:.0f}s"
-                                )
-                                search_col2.caption(
-                                    f"⚠️ {n} matches -- roughly {est_label} at this app's own "
-                                    "benchmarked rate (~1.1s/piece, dominated by fetching/parsing "
-                                    "each piece, not the pattern match itself). Add a filter above "
-                                    "(composer, collection, ...) first if you'd rather not wait "
-                                    "that long."
-                                )
+                            # buttons, which use the same shared helper --
+                            # see _match_count_time_warning's own docstring)
+                            # -- a time estimate the user can decide against
+                            # beats a wall that forces narrowing the search
+                            # first regardless of whether the wait is fine.
+                            pattern_warning = _match_count_time_warning(n, BULK_PATTERN_MAX_MATCHES, 1.09)
+                            if pattern_warning:
+                                search_col2.caption(pattern_warning)
                             if search_col2.button(f"🌐 Search all {n} matches", key=f"{key_prefix}_{filename_stem}_pattern_search_corpus"):
                                 progress_bar = st.progress(0.0)
                                 status = st.empty()
@@ -3079,6 +3062,31 @@ BULK_MIDI_MAX_MATCHES = 20
 BULK_PATTERN_MAX_MATCHES = 30
 
 
+def _match_count_time_warning(n_matches, threshold, seconds_per_piece):
+    """Shared by every bulk-export button below (and the cross-piece
+    pattern search) -- returns a warning string to show above a button
+    once `n_matches` exceeds `threshold`, estimating wall-clock time from
+    a benchmarked per-piece rate, or None if under threshold (nothing to
+    show, button just works). Replaces this app's earlier hard caps
+    (each *_MAX_MATCHES constant above used to block the button outright
+    past its threshold) -- per direct feedback, a time estimate the user
+    can decide against is preferable to a wall that forces narrowing the
+    search first regardless of whether the user actually minds the wait.
+    Callers still gate their OWN, non-performance constraints (e.g. the
+    CSV export's "check at least one analysis" requirement) separately --
+    this only ever concerns match count."""
+    if n_matches <= threshold:
+        return None
+    est_seconds = n_matches * seconds_per_piece
+    est_label = f"~{est_seconds / 60:.0f} min" if est_seconds >= 90 else f"~{est_seconds:.0f}s"
+    return (
+        f"⚠️ {n_matches} matches -- roughly {est_label} at this app's own "
+        f"benchmarked rate (~{seconds_per_piece:.3g}s/piece). Add a filter "
+        "above (composer, collection, ...) first if you'd rather not wait "
+        "that long."
+    )
+
+
 def _bulk_export_zip_bytes(matches, include_cadences, include_ptypes, include_homorhythm, export_fn, extension, progress_callback=None):
     """Shared implementation behind _bulk_pdf_zip_bytes/_bulk_mei_zip_bytes/
     _bulk_midi_zip_bytes -- these differ only in which single-piece export
@@ -3847,15 +3855,11 @@ with tab_browse:
                 bulk_annotated = bulk_cadences or bulk_ptypes or bulk_hr
 
                 st.markdown("**MusicXML**")
-                if len(matches) > BULK_XML_MAX_MATCHES:
-                    st.caption(
-                        f"This needs {BULK_XML_MAX_MATCHES} or fewer matches to run (your Browse "
-                        f"search above currently returns {len(matches)}) -- add a filter above "
-                        f"(composer, collection, ...) to bring it under {BULK_XML_MAX_MATCHES}, "
-                        "then this button will work, or use the CSV above for the full list "
-                        "regardless of how many matches there are."
-                    )
-                elif st.button(
+                xml_warning = _match_count_time_warning(len(matches), BULK_XML_MAX_MATCHES, 7.49)
+                if xml_warning:
+                    st.caption(xml_warning + " Or use the CSV above for the full list right away, "
+                               "regardless of how many matches there are.")
+                if st.button(
                     f"📦 Build a ZIP of all {len(matches)} {'annotated ' if bulk_annotated else ''}score(s) (MusicXML)",
                     key="browse_zip_build", type="primary",
                 ):
@@ -3890,14 +3894,10 @@ with tab_browse:
                     )
 
                 st.markdown("**PDF**")
-                if len(matches) > BULK_PDF_MAX_MATCHES:
-                    st.caption(
-                        f"This needs {BULK_PDF_MAX_MATCHES} or fewer matches to run (your Browse "
-                        f"search above currently returns {len(matches)}) -- add a filter above "
-                        f"(composer, collection, ...) to bring it under {BULK_PDF_MAX_MATCHES}, "
-                        "then this button will work."
-                    )
-                elif st.button(
+                pdf_warning = _match_count_time_warning(len(matches), BULK_PDF_MAX_MATCHES, 20.28)
+                if pdf_warning:
+                    st.caption(pdf_warning)
+                if st.button(
                     f"📄 Build a ZIP of all {len(matches)} piece(s) as {'annotated ' if bulk_annotated else 'plain '}PDFs",
                     key="browse_pdf_zip_build", type="primary",
                 ):
@@ -3937,14 +3937,10 @@ with tab_browse:
                     "format instead -- music21 has no MEI writer of its own, so this comes "
                     "from the same Verovio conversion the PDF uses (see score_to_mei_bytes)."
                 )
-                if len(matches) > BULK_MEI_MAX_MATCHES:
-                    st.caption(
-                        f"This needs {BULK_MEI_MAX_MATCHES} or fewer matches to run (your Browse "
-                        f"search above currently returns {len(matches)}) -- add a filter above "
-                        f"(composer, collection, ...) to bring it under {BULK_MEI_MAX_MATCHES}, "
-                        "then this button will work."
-                    )
-                elif st.button(
+                mei_warning = _match_count_time_warning(len(matches), BULK_MEI_MAX_MATCHES, 7.74)
+                if mei_warning:
+                    st.caption(mei_warning)
+                if st.button(
                     f"🎼 Build a ZIP of all {len(matches)} piece(s) as {'annotated ' if bulk_annotated else 'plain '}MEI",
                     key="browse_mei_zip_build", type="primary",
                 ):
@@ -3984,14 +3980,10 @@ with tab_browse:
                     "there's no 'plain vs. annotated' distinction here the way there is for "
                     "every format above; the checked analyses above only affect the filename."
                 )
-                if len(matches) > BULK_MIDI_MAX_MATCHES:
-                    st.caption(
-                        f"This needs {BULK_MIDI_MAX_MATCHES} or fewer matches to run (your Browse "
-                        f"search above currently returns {len(matches)}) -- add a filter above "
-                        f"(composer, collection, ...) to bring it under {BULK_MIDI_MAX_MATCHES}, "
-                        "then this button will work."
-                    )
-                elif st.button(
+                midi_warning = _match_count_time_warning(len(matches), BULK_MIDI_MAX_MATCHES, 7.74)
+                if midi_warning:
+                    st.caption(midi_warning)
+                if st.button(
                     f"🎹 Build a ZIP of all {len(matches)} piece(s) as MIDI",
                     key="browse_midi_zip_build", type="primary",
                 ):
@@ -4035,14 +4027,10 @@ with tab_browse:
                     "side. Unlike MusicXML/PDF above, this one genuinely needs at least one "
                     "analysis checked -- there's no 'plain' version of an analysis-data export."
                 )
-                if len(matches) > BULK_CSV_MAX_MATCHES:
-                    st.caption(
-                        f"This needs {BULK_CSV_MAX_MATCHES} or fewer matches to run (your Browse "
-                        f"search above currently returns {len(matches)}) -- add a filter above "
-                        f"(composer, collection, ...) to bring it under {BULK_CSV_MAX_MATCHES}, "
-                        "then this button will work."
-                    )
-                elif not bulk_annotated:
+                csv_warning = _match_count_time_warning(len(matches), BULK_CSV_MAX_MATCHES, 4.02)
+                if csv_warning:
+                    st.caption(csv_warning)
+                if not bulk_annotated:
                     st.caption("Check at least one analysis above to enable this export.")
                 elif st.button(f"🧮 Build analysis-data CSV(s) for all {len(matches)} piece(s)", key="browse_bulk_analysis_build", type="primary"):
                     progress_bar = st.progress(0.0)
