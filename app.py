@@ -1289,6 +1289,85 @@ def show_result(annotated_score, stats, filename_stem, include_cadences=False, i
                 type="primary",
             )
 
+    with st.expander("🔎 Find this melodic pattern elsewhere in the piece"):
+        import pattern_search as ps
+        if not ps.is_available():
+            st.caption(
+                f"ⓘ Not available in this deployment ({ps.unavailable_reason()}) -- "
+                "the rest of the app is unaffected."
+            )
+        else:
+            st.caption(
+                "Pick a stretch of one voice as the query; searches the WHOLE piece "
+                "(every voice, not just the one the query came from) for exact or "
+                "near-exact repeats -- including transposed ones, at any pitch level. "
+                "Via [PatternFinder](https://doi.org/10.1145/3144749.3144751) "
+                "(Garfinkle, Arthur, Schubert, Cumming & Fujinaga, DLFM'17) -- only its "
+                "P1/P2 algorithms, the only two independently verified to work; see "
+                "this app's own `pattern_search.py` module docstring for why not the "
+                "other five the paper describes."
+            )
+            part_names = [p.partName or f'Voice {i + 1}' for i, p in enumerate(annotated_score.parts)]
+            pattern_part_idx = st.selectbox(
+                "Query voice", range(len(part_names)),
+                format_func=lambda i: part_names[i], key=f"{key_prefix}_{filename_stem}_pattern_voice",
+            )
+            query_part = annotated_score.parts[pattern_part_idx]
+            all_measure_numbers = sorted({
+                m.number for m in query_part.getElementsByClass('Measure') if m.number
+            })
+            if len(all_measure_numbers) < 2:
+                st.caption("ⓘ This voice doesn't have enough measures to pick a query range from.")
+            else:
+                pattern_col1, pattern_col2 = st.columns(2)
+                query_start = pattern_col1.selectbox(
+                    "First measure", all_measure_numbers, key=f"{key_prefix}_{filename_stem}_pattern_start",
+                )
+                query_end = pattern_col2.selectbox(
+                    "Last measure", all_measure_numbers,
+                    index=min(3, len(all_measure_numbers) - 1),
+                    key=f"{key_prefix}_{filename_stem}_pattern_end",
+                )
+                pattern_algorithm = st.radio(
+                    "Match type", ["Exact (any transposition)", "Approximate (allow some mismatches)"],
+                    key=f"{key_prefix}_{filename_stem}_pattern_algo",
+                    help="'Exact' still matches a transposed repeat -- the whole shape just has to "
+                         "be identical at some pitch level. 'Approximate' additionally tolerates a "
+                         "few notes that don't match at all (e.g. a varied repeat, not a literal one).",
+                )
+                pattern_mismatches = 1
+                if pattern_algorithm.startswith("Approximate"):
+                    pattern_mismatches = st.slider(
+                        "Notes allowed to not match", 1, 5, 1,
+                        key=f"{key_prefix}_{filename_stem}_pattern_mismatches",
+                    )
+                if query_end < query_start:
+                    st.caption("ⓘ Last measure must be at or after the first measure.")
+                elif st.button("Search", key=f"{key_prefix}_{filename_stem}_pattern_search"):
+                    query = ps.extract_query_from_measures(query_part, query_start, query_end)
+                    if len(list(query.notes)) < 2:
+                        st.info("That range has fewer than 2 real notes in this voice -- nothing to search for.")
+                    else:
+                        try:
+                            with st.spinner(_random_loading_message()):
+                                if pattern_algorithm.startswith("Approximate"):
+                                    occurrences = ps.find_pattern_occurrences(
+                                        query, annotated_score, algorithm='P2', mismatches=pattern_mismatches,
+                                    )
+                                else:
+                                    occurrences = ps.find_pattern_occurrences(query, annotated_score, algorithm='P1')
+                        except Exception as exc:
+                            st.error(f"Pattern search failed on this piece ({exc}).")
+                        else:
+                            if not occurrences:
+                                st.info("No matches found (besides, potentially, the query itself).")
+                            else:
+                                st.success(f"{len(occurrences)} occurrence(s) found:")
+                                for occ in occurrences:
+                                    measures = occ['measures']
+                                    measure_label = f"measures {measures[0]}-{measures[1]}" if measures else "measure unknown"
+                                    st.caption(f"**{measure_label}**: {' '.join(occ['notes'])}")
+
 
 with st.expander("ℹ️ Credits & data sources"):
     st.markdown(
@@ -1598,6 +1677,18 @@ Entry/Imitative Duo/Fuga terminology and classification):
   (CRIM)"](https://online.ucpress.edu/jams/article/77/3/863/203475/Citations-The-Renaissance-Imitation-Mass-Project),
   *Journal of the American Musicological Society* 77, no. 3 (2024):
   863-875.
+
+**Melodic pattern search** (the "Find this melodic pattern elsewhere"
+expander -- transposition-invariant exact/approximate matching):
+- David Garfinkle, Claire Arthur, Peter Schubert, Julie Cumming, and
+  Ichiro Fujinaga, ["PatternFinder: Content-Based Music Retrieval with
+  music21"](https://doi.org/10.1145/3144749.3144751), in *Proceedings
+  of the 4th International Workshop on Digital Libraries for
+  Musicology* (DLFM'17, Shanghai, China, 2017), 4 pages -- only its P1/
+  P2 algorithms are used here (both independently verified working; a
+  real feasibility spike found the other five described in the paper
+  currently share an unresolved bug -- see this app's own
+  `pattern_search.py` module docstring).
 
 **Modal theory & the Browse tab's Modal family filter** (why it groups
 by family rather than showing a raw finalis pitch, why Tritus carries

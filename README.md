@@ -772,6 +772,61 @@ here rather than assuming they'd all transfer:
   formats, built for their own visualization tools; not something this
   app's pipeline produces or has a reason to.
 
+## Melodic pattern search (PatternFinder, P1/P2 only)
+
+New expander in the single-piece view — "🔎 Find this melodic pattern
+elsewhere in the piece". Pick a stretch of one voice; searches the
+whole piece for exact or near-exact repeats **at any pitch level**
+(transposition-invariant), via [PatternFinder](https://doi.org/10.1145/3144749.3144751)
+(Garfinkle, Arthur, Schubert, Cumming & Fujinaga, DLFM'17) — the
+geometric point-set matching algorithms from Helsinki's C-Brahms
+research group, applied to Renaissance polyphony (the paper's own
+demonstration corpus was Palestrina's 104 masses).
+
+**Only P1 (exact match) and P2 (approximate match, N mismatches
+allowed) are exposed** — deliberately, not the full "seven algorithms"
+the paper describes. A real, hands-on feasibility spike (not just
+reading the README) found:
+- PatternFinder isn't on PyPI (installed from GitHub, pinned in
+  `requirements.txt` to the exact commit this app was verified
+  against — no versioned releases exist to pin to instead).
+- Importing it **unconditionally overwrites music21's own global,
+  per-OS-user settings file** with a path that doesn't exist on any
+  machine but the original author's — confirmed directly to break
+  `music21.corpus.parse()` in every other environment on the same
+  machine, not just wherever it was imported. `pattern_search.py`'s
+  own `_apply_patches()` repairs this immediately after import, every
+  time — the only reason this is safe to ship at all.
+- 5 more real bugs, all genuine Python-2-to-3 or music21-version
+  incompatibilities (old `.next()` iterator convention, permissive
+  cross-type `<` comparison Python 3 removed, PEP 479's generator/
+  StopIteration change, `mergeAttributes` no longer propagating `.id`)
+  — all fixed, session-local monkeypatches in `pattern_search.py`,
+  none of them touch the installed package's own files.
+- P3 and the whole S/W family (time-scaled/time-warped matching — the
+  other 5 of the paper's "seven algorithms") hit a **deeper, unresolved**
+  object-identity bug, confirmed independently in two different
+  algorithm families — **not fixed, not exposed** here. Matches this
+  repo's own GitHub description, taken at face value from the start:
+  "P1 (exact matching) and P2 (approximate matching) currently
+  operational."
+
+Full spike log, including every bug and every fix in detail:
+`Tesi/done_by_claude/note_osservazioni_prompt/patternfinder_feasibility_spike.md`
+(a sibling thesis-project repo, not this one — the spike was run
+before the decision to integrate anything here was made).
+
+Deliberately scoped to search **within one piece only** for now, not
+across the whole corpus — cross-piece search (the paper's own headline
+use case: finding borrowed material between masses) is a real,
+larger follow-up, not attempted here yet (would need a corpus-wide
+indexing/performance strategy this first version doesn't have).
+
+If PatternFinder isn't importable in some deployment (a real, disclosed
+risk of a git-only, non-PyPI dependency), `pattern_search.is_available()`
+returns `False` and the expander shows a plain notice instead of
+crashing — the rest of the app is unaffected either way.
+
 ## Credits & licensing
 
 *(The same content is also in the app itself, in the "ℹ️ Credits & data
