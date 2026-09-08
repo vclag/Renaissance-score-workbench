@@ -1334,14 +1334,28 @@ def show_result(annotated_score, stats, filename_stem, include_cadences=False, i
             if len(all_measure_numbers) < 2:
                 st.caption("ⓘ This voice doesn't have enough measures to pick a query range from.")
             else:
+                # Typed, not picked from a dropdown -- a real piece can have
+                # dozens or hundreds of measures, and scrolling/clicking
+                # through a selectbox to find e.g. measure 87 is real
+                # friction a plain number field doesn't have. Bounded to the
+                # voice's own actual first/last measure number so a typo
+                # can't request something meaningless; a number that falls
+                # inside that range but isn't an actual measure number
+                # (a rare gap in the piece's own numbering) just yields no
+                # notes for that end of the range -- extract_query_from_
+                # measures already handles that with a plain inclusive
+                # comparison, and the "fewer than 2 notes" check below
+                # catches the resulting empty/tiny query gracefully.
+                min_measure, max_measure = all_measure_numbers[0], all_measure_numbers[-1]
+                default_end = all_measure_numbers[min(3, len(all_measure_numbers) - 1)]
                 pattern_col1, pattern_col2 = st.columns(2)
-                query_start = pattern_col1.selectbox(
-                    "First measure", all_measure_numbers, key=f"{key_prefix}_{filename_stem}_pattern_start",
+                query_start = pattern_col1.number_input(
+                    "First measure", min_value=min_measure, max_value=max_measure,
+                    value=min_measure, step=1, key=f"{key_prefix}_{filename_stem}_pattern_start",
                 )
-                query_end = pattern_col2.selectbox(
-                    "Last measure", all_measure_numbers,
-                    index=min(3, len(all_measure_numbers) - 1),
-                    key=f"{key_prefix}_{filename_stem}_pattern_end",
+                query_end = pattern_col2.number_input(
+                    "Last measure", min_value=min_measure, max_value=max_measure,
+                    value=default_end, step=1, key=f"{key_prefix}_{filename_stem}_pattern_end",
                 )
                 pattern_algorithm = st.radio(
                     "Match type", ["Exact (any transposition)", "Approximate (allow some mismatches)"],
@@ -1395,8 +1409,10 @@ def show_result(annotated_score, stats, filename_stem, include_cadences=False, i
                             n = len(corpus_matches)
                             if n > BULK_PATTERN_MAX_MATCHES:
                                 search_col2.caption(
-                                    f"Works for up to {BULK_PATTERN_MAX_MATCHES} matches at once "
-                                    f"(this search has {n}) -- narrow the search to enable it."
+                                    f"This needs {BULK_PATTERN_MAX_MATCHES} or fewer matches to run "
+                                    f"(your Browse search above currently returns {n}) -- add a "
+                                    "filter above (composer, collection, ...) to bring it under "
+                                    f"{BULK_PATTERN_MAX_MATCHES}, then this button will work."
                                 )
                             elif search_col2.button(f"🌐 Search all {n} matches", key=f"{key_prefix}_{filename_stem}_pattern_search_corpus"):
                                 progress_bar = st.progress(0.0)
@@ -3810,9 +3826,11 @@ with tab_browse:
                 st.markdown("**MusicXML**")
                 if len(matches) > BULK_XML_MAX_MATCHES:
                     st.caption(
-                        f"Works for up to {BULK_XML_MAX_MATCHES} matches at once (this search has "
-                        f"{len(matches)}) -- narrow the search to enable it, or use the CSV above "
-                        "for the full list."
+                        f"This needs {BULK_XML_MAX_MATCHES} or fewer matches to run (your Browse "
+                        f"search above currently returns {len(matches)}) -- add a filter above "
+                        f"(composer, collection, ...) to bring it under {BULK_XML_MAX_MATCHES}, "
+                        "then this button will work, or use the CSV above for the full list "
+                        "regardless of how many matches there are."
                     )
                 elif st.button(
                     f"📦 Build a ZIP of all {len(matches)} {'annotated ' if bulk_annotated else ''}score(s) (MusicXML)",
@@ -3851,8 +3869,10 @@ with tab_browse:
                 st.markdown("**PDF**")
                 if len(matches) > BULK_PDF_MAX_MATCHES:
                     st.caption(
-                        f"Works for up to {BULK_PDF_MAX_MATCHES} matches at once (this search "
-                        f"has {len(matches)}) -- narrow the search to enable it."
+                        f"This needs {BULK_PDF_MAX_MATCHES} or fewer matches to run (your Browse "
+                        f"search above currently returns {len(matches)}) -- add a filter above "
+                        f"(composer, collection, ...) to bring it under {BULK_PDF_MAX_MATCHES}, "
+                        "then this button will work."
                     )
                 elif st.button(
                     f"📄 Build a ZIP of all {len(matches)} piece(s) as {'annotated ' if bulk_annotated else 'plain '}PDFs",
@@ -3896,8 +3916,10 @@ with tab_browse:
                 )
                 if len(matches) > BULK_MEI_MAX_MATCHES:
                     st.caption(
-                        f"Works for up to {BULK_MEI_MAX_MATCHES} matches at once (this search "
-                        f"has {len(matches)}) -- narrow the search to enable it."
+                        f"This needs {BULK_MEI_MAX_MATCHES} or fewer matches to run (your Browse "
+                        f"search above currently returns {len(matches)}) -- add a filter above "
+                        f"(composer, collection, ...) to bring it under {BULK_MEI_MAX_MATCHES}, "
+                        "then this button will work."
                     )
                 elif st.button(
                     f"🎼 Build a ZIP of all {len(matches)} piece(s) as {'annotated ' if bulk_annotated else 'plain '}MEI",
@@ -3941,8 +3963,10 @@ with tab_browse:
                 )
                 if len(matches) > BULK_MIDI_MAX_MATCHES:
                     st.caption(
-                        f"Works for up to {BULK_MIDI_MAX_MATCHES} matches at once (this search "
-                        f"has {len(matches)}) -- narrow the search to enable it."
+                        f"This needs {BULK_MIDI_MAX_MATCHES} or fewer matches to run (your Browse "
+                        f"search above currently returns {len(matches)}) -- add a filter above "
+                        f"(composer, collection, ...) to bring it under {BULK_MIDI_MAX_MATCHES}, "
+                        "then this button will work."
                     )
                 elif st.button(
                     f"🎹 Build a ZIP of all {len(matches)} piece(s) as MIDI",
@@ -3990,8 +4014,10 @@ with tab_browse:
                 )
                 if len(matches) > BULK_CSV_MAX_MATCHES:
                     st.caption(
-                        f"Works for up to {BULK_CSV_MAX_MATCHES} matches at once (this search has "
-                        f"{len(matches)}) -- narrow the search to enable it."
+                        f"This needs {BULK_CSV_MAX_MATCHES} or fewer matches to run (your Browse "
+                        f"search above currently returns {len(matches)}) -- add a filter above "
+                        f"(composer, collection, ...) to bring it under {BULK_CSV_MAX_MATCHES}, "
+                        "then this button will work."
                     )
                 elif not bulk_annotated:
                     st.caption("Check at least one analysis above to enable this export.")
