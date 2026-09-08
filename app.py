@@ -165,9 +165,11 @@ st.caption(
     "several separate archives online. It gathers ~4,300 such pieces from "
     "7 sources into one searchable, analysis-ready place. Run CRIM's "
     "structural analyses (cadences, points of imitation, homorhythmic "
-    "passages), see where they fall across the piece, and take the results "
-    "further -- an annotated score for MuseScore/Finale, a PDF to read or "
-    "print, a raw file for your own code, or a dataset across a whole search."
+    "passages), search for a melodic pattern within one piece or across "
+    "every match at once, see where results fall across the piece, and "
+    "take them further -- an annotated score for MuseScore/Finale, a PDF "
+    "to read or print, a raw file for your own code, or a dataset across "
+    "a whole search."
 )
 
 
@@ -1827,6 +1829,14 @@ reclassified):
   for Computer-Aided Musicology and Symbolic Music
   Data"](https://www.music21.org/) (2010) -- every score this app reads
   is parsed with it.
+- David Garfinkle, Claire Arthur, Peter Schubert, Julie Cumming, and
+  Ichiro Fujinaga, ["PatternFinder: Content-Based Music Retrieval with
+  music21"](https://doi.org/10.1145/3144749.3144751), *Proceedings of
+  the 4th International Workshop on Digital Libraries for Musicology*
+  (DLfM 2017, Shanghai, China): 5-8 -- the "Find this melodic pattern
+  elsewhere" search (single-piece and cross-piece) calls its P1/P2
+  algorithms directly; see the pattern-search expander's own caption
+  for why only those two of the paper's algorithms are exposed.
 
 ### Further reading -- computational musicology & Renaissance polyphony, more broadly
 
@@ -1849,13 +1859,6 @@ does, the same way the section above is.
   New Music Research* 38, no. 2 (2009): 171-181 -- corpus-scale melodic
   pattern-finding across Palestrina's complete Mass output (700+
   sections, ~1,000,000 notes).
-- David Garfinkle, Claire Arthur, Peter Schubert, Julie Cumming, and
-  Ichiro Fujinaga, ["PatternFinder: Content-Based Music Retrieval with
-  music21"](https://doi.org/10.1145/3144749.3144751), *Proceedings of
-  the 4th International Workshop on Digital Libraries for Musicology*
-  (DLfM 2017, Shanghai, China): 5-8 -- a polyphonic pattern-search
-  toolkit built on the same music21 library this app uses, from several
-  of the same scholars behind CRIM's own presentation-types work.
 - David Meredith, Kjell Lemström, and Geraint A. Wiggins, ["Algorithms
   for Discovering Repeated Patterns in Multidimensional Representations
   of Polyphonic
