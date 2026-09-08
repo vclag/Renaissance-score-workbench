@@ -819,8 +819,12 @@ before the decision to integrate anything here was made).
 **Cross-piece search (Browse only):** from a Browse search with more
 than one match, a second button — "🌐 Search all N matches" — runs the
 same query against every match's own score, not just the one currently
-open (up to `BULK_PATTERN_MAX_MATCHES` = 30 at once; narrow the search
-to enable it above that). Reuses `_import_piece_by_collection`, the
+open. No hard cap on how many matches at once — past
+`BULK_PATTERN_MAX_MATCHES` = 30, a time estimate is shown instead (e.g.
+roughly an hour for the near-full ~4,300-piece corpus, at ~1.1s/piece)
+rather than blocking the button outright, so the choice to wait or
+narrow the search first is the user's, not forced. Reuses
+`_import_piece_by_collection`, the
 same cheap "fetch/parse, skip CRIM's own cadence/ptype/homorhythm
 annotation" path the bulk analysis-CSV export already uses — pattern
 search doesn't need any of that. Benchmarked on 10 real music21-bundled

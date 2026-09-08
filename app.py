@@ -1407,14 +1407,33 @@ def show_result(annotated_score, stats, filename_stem, include_cadences=False, i
                                         st.caption(f"**{measure_label}**: {' '.join(occ['notes'])}")
                         if show_corpus_search:
                             n = len(corpus_matches)
+                            # No hard cap here (unlike the bulk export
+                            # buttons below, which block outright past their
+                            # own cap) -- per direct feedback, a time
+                            # estimate the user can decide against is
+                            # preferable to a wall that forces narrowing the
+                            # search first. Still worth a visible warning
+                            # past BULK_PATTERN_MAX_MATCHES pieces though,
+                            # using the same ~1.1s/piece benchmark the old
+                            # cap was set from (see that constant's own
+                            # comment) -- so someone about to kick off a
+                            # search over the (near-)full ~4,300-piece
+                            # corpus knows it could run well over an hour
+                            # before clicking, not partway through it.
                             if n > BULK_PATTERN_MAX_MATCHES:
-                                search_col2.caption(
-                                    f"This needs {BULK_PATTERN_MAX_MATCHES} or fewer matches to run "
-                                    f"(your Browse search above currently returns {n}) -- add a "
-                                    "filter above (composer, collection, ...) to bring it under "
-                                    f"{BULK_PATTERN_MAX_MATCHES}, then this button will work."
+                                est_seconds = n * 1.1
+                                est_label = (
+                                    f"~{est_seconds / 60:.0f} min" if est_seconds >= 90
+                                    else f"~{est_seconds:.0f}s"
                                 )
-                            elif search_col2.button(f"🌐 Search all {n} matches", key=f"{key_prefix}_{filename_stem}_pattern_search_corpus"):
+                                search_col2.caption(
+                                    f"⚠️ {n} matches -- roughly {est_label} at this app's own "
+                                    "benchmarked rate (~1.1s/piece, dominated by fetching/parsing "
+                                    "each piece, not the pattern match itself). Add a filter above "
+                                    "(composer, collection, ...) first if you'd rather not wait "
+                                    "that long."
+                                )
+                            if search_col2.button(f"🌐 Search all {n} matches", key=f"{key_prefix}_{filename_stem}_pattern_search_corpus"):
                                 progress_bar = st.progress(0.0)
                                 status = st.empty()
 
@@ -3043,16 +3062,20 @@ BULK_CSV_MAX_MATCHES = 40
 # against a proper mixed sample.
 BULK_MEI_MAX_MATCHES = 20
 BULK_MIDI_MAX_MATCHES = 20
-# Pattern search across matches -- benchmarked on 10 real music21-bundled
-# Palestrina pieces (7 resolved; 3 file IDs guessed wrong and correctly
-# raised/skipped, not counted), P1 algorithm, an 11-note query: 1.09s/
-# piece average including the corpus.parse() fetch itself (the dominant
-# cost, same as every other bulk export here that uses _import_piece_by_
-# collection -- PatternFinder's own matching is fast on these note
-# counts). Smaller/less systematic than the original 25-piece benchmark
-# above, same honesty caveat as MEI/MIDI's own cap comment: a real
-# measurement, not a guess, but revisit if it turns out too slow/fast in
-# practice. 30 targets a worst case under 2 minutes.
+# Pattern search across matches -- NOT a hard cap like the *_MAX_MATCHES
+# constants below (removed per direct feedback: a time estimate the user
+# can decide against beats a wall that forces narrowing the search
+# first). Used only as the threshold past which a time-estimate warning
+# is shown before the "Search all N matches" button -- see that button's
+# own code. Benchmarked on 10 real music21-bundled Palestrina pieces (7
+# resolved; 3 file IDs guessed wrong and correctly raised/skipped, not
+# counted), P1 algorithm, an 11-note query: 1.09s/piece average including
+# the corpus.parse() fetch itself (the dominant cost, same as every other
+# bulk export here that uses _import_piece_by_collection -- PatternFinder's
+# own matching is fast on these note counts). Smaller/less systematic
+# than the original 25-piece benchmark below, same honesty caveat as
+# MEI/MIDI's own comment: a real measurement, not a guess, but revisit if
+# it turns out too slow/fast in practice.
 BULK_PATTERN_MAX_MATCHES = 30
 
 
