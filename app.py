@@ -1192,6 +1192,7 @@ def show_result(annotated_score, stats, filename_stem, include_cadences=False, i
             file_name=f"{download_name}_annotated.mei" if annotated else f"{download_name}.mei",
             mime="application/xml",
             key=f"{key_prefix}_{filename_stem}_mei_download",
+            type="primary",
         )
     except Exception as exc:
         st.caption(f"ⓘ Couldn't build an MEI file for this piece ({exc}).")
@@ -1203,6 +1204,7 @@ def show_result(annotated_score, stats, filename_stem, include_cadences=False, i
             file_name=f"{download_name}.mid",
             mime="audio/midi",
             key=f"{key_prefix}_{filename_stem}_midi_download",
+            type="primary",
         )
     except Exception as exc:
         st.caption(f"ⓘ Couldn't build a MIDI file for this piece ({exc}).")
