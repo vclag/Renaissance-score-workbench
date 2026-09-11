@@ -2350,77 +2350,6 @@ def _local_file_stats(file_path):
     return None, None  # an unanticipated format -- honestly unknown, not guessed
 
 
-def preview_piece(collection, native_ref):
-    """Returns (voices, has_text, note) for one piece WITHOUT running the
-    full annotate pipeline -- voices/has_text are None where not cheaply
-    determinable. Every branch was checked against real data before
-    writing it, not assumed uniform across all 7 sources:
-    - CRIM: voice count is already free in the piece-list JSON
-      ('number_of_voices'); has-text needs one MEI fetch, checked via a
-      raw '<verse'/'<syl' tag search rather than a full MEI parse.
-    - music21 corpus (Palestrina/Monteverdi): both voices and has-text
-      are read directly from the local file (see _local_file_stats) --
-      NOT from the metadata bundle's 'numberOfParts', which was tried
-      first and found unreliable (see that function's docstring: only
-      5 of Monteverdi's 49 real scores are actually indexed in the
-      bundle). No network involved either way, since these ship inside
-      the music21 package itself.
-    - The five kern collections: one raw-file fetch (files are tiny, a
-      few KB to tens of KB, confirmed earlier in this session), then
-      voice count from counting '**kern' tokens on the spine-declaration
-      line, and has-text from whether a '**text' spine is present on
-      that same line -- both checked directly against real files from
-      all five collections before relying on this.
-    """
-    if collection == 'crim':
-        p = native_ref
-        voices = p.get('number_of_voices')
-        if not p['mei_links']:
-            # A real gap in CRIM's own catalog (confirmed directly) --
-            # this piece is listed but has no MEI file at all yet.
-            return voices, None, "CRIM has no MEI file for this piece yet -- can't check its text/lyrics or annotate it."
-        try:
-            mei_text = requests.get(p['mei_links'][0], timeout=20).text
-            has_text = ('<verse' in mei_text) or ('<syl' in mei_text)
-        except Exception:
-            has_text = None
-        return voices, has_text, None
-
-    if collection == 'music21':
-        corpus_key, piece_id = native_ref
-        # A grouped multi-part Palestrina movement (see corpus_sources.
-        # group_browse_rows) has no single file of its own -- piece_id
-        # names the whole movement, not a real file, when it has more
-        # than one member. voices = the MAX any one member reports (the
-        # movement's fullest scoring -- a real merge would need each
-        # member's actual voice NAMES to union correctly, see
-        # corpus_sources.merge_movement_parts, but that needs a real
-        # parse; this stays cheap/header-only, so a reasonable
-        # approximation, not the precise union, is what's shown here).
-        # has_text = True if ANY member has it.
-        members = _palestrina_movement_members().get(piece_id, [piece_id]) if corpus_key == 'palestrina' else [piece_id]
-        voices_list, has_text_list = [], []
-        for member_id in members:
-            file_path = _local_corpus_file_path(corpus_key, member_id)
-            v, t = _local_file_stats(file_path)
-            if v is not None:
-                voices_list.append(v)
-            if t is not None:
-                has_text_list.append(t)
-        voices = max(voices_list) if voices_list else None
-        has_text = any(has_text_list) if has_text_list else None
-        return voices, has_text, None
-
-    try:
-        text = requests.get(KERN_COLLECTION_BASE_URLS[collection] + native_ref, timeout=20).text
-    except Exception:
-        return None, None, "Couldn't fetch this file to preview it."
-    spine_line = next((line for line in text.split('\n') if line.startswith('**')), '')
-    voices = spine_line.count('**kern') or None
-    has_text = '**text' in spine_line
-    return voices, has_text, None
-
-
 def _browse_piece_filename_stem(collection, native_ref):
     """The stem used for the downloaded annotated file's name -- differs
     by collection because native_ref's shape differs (see
@@ -3461,11 +3390,17 @@ def _random_fetch_message():
 
 
 def render_preview_and_annotate(collection, native_ref, piece_label, filename_stem, key_prefix=None, corpus_matches=None):
-    """Two-column Preview/Download buttons -- shared by every dedicated
-    collection tab AND Browse (same layout, same underlying calls), so a
-    given piece behaves identically no matter which tab you reach it
-    from. Built on preview_piece()/annotate_by_collection(), not a
-    separate per-tab reimplementation.
+    """Analyze/Download button -- shared by every dedicated collection tab
+    AND Browse (same layout, same underlying calls), so a given piece
+    behaves identically no matter which tab you reach it from. Built on
+    annotate_by_collection(), not a separate per-tab reimplementation.
+
+    Used to also show a "Preview" button (voice count/has-text, via the
+    now-removed preview_piece()) alongside this one -- dropped since
+    Browse's "Number of voices" filter (precomputed, see
+    scripts/precompute_voices.py) already surfaces the one piece of info
+    it showed that isn't free from the piece list itself, making the
+    extra click/round-trip redundant.
 
     key_prefix defaults to `collection`, but Browse passes 'browse'
     explicitly: since every tab's widgets are mounted simultaneously
@@ -3503,23 +3438,14 @@ def render_preview_and_annotate(collection, native_ref, piece_label, filename_st
     # runs at all -- so it keeps that label instead.
     action_label = "Analyze" if (include_cadences or include_ptypes or include_homorhythm) else "Download"
 
-    col1, col2 = st.columns(2)
-    # type="primary" -- Streamlit's own accent-colored button style,
-    # using .streamlit/config.toml's primaryColor (the same orange from
-    # the identity-review mockup) directly, not a custom CSS override.
-    if col1.button("Preview", key=f"preview_{key_prefix}", type="primary"):
-        with st.spinner(_random_loading_message()):
-            voices, has_text, note = preview_piece(collection, native_ref)
-        st.write(f"**Voices:** {voices if voices is not None else 'unknown'}")
-        has_text_display = 'yes' if has_text else ('no' if has_text is False else 'unknown')
-        st.write(f"**Has encoded text/lyrics:** {has_text_display}")
-        if note:
-            st.caption(note)
+    # type="primary" -- Streamlit's own accent-colored button style, using
+    # .streamlit/config.toml's primaryColor (the same orange from the
+    # identity-review mockup) directly, not a custom CSS override.
     # Keyed by tab AND piece (not just key_prefix) so switching the "Pick
     # one" dropdown to a different piece without re-clicking Analyze doesn't
     # keep showing a stale result for the previous one.
     result_key = f"{key_prefix}_{filename_stem}_result"
-    if col2.button(action_label, key=f"annotate_{key_prefix}", type="primary"):
+    if st.button(action_label, key=f"annotate_{key_prefix}", type="primary"):
         with st.spinner(_random_loading_message()):
             try:
                 annotated_score, stats, error = annotate_by_collection(
