@@ -1173,7 +1173,7 @@ def show_result(annotated_score, stats, filename_stem, include_cadences=False, i
 
     methods_blurb = _build_methods_blurb(include_cadences, include_ptypes, include_homorhythm)
     if methods_blurb:
-        with st.expander("📋 Methods-section description (for a paper)"):
+        with st.expander("📋 Methods-section description"):
             st.caption("Only mentions whichever analyses were actually requested above -- copy it as-is.")
             st.code(methods_blurb, language=None)
 
