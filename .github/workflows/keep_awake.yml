@@ -76,12 +76,32 @@ jobs:
             // finished spinning the container back up -- waiting for
             // this, not for any particular HTTP status code, is what
             // actually confirms a real wake, not just a page load.
-            const target = page.getByText('Renaissance Polyphony Research Toolkit');
+            //
+            // Timeout raised 120s -> 360s after a real run timed out at
+            // 120s (2026-09-11, run #40) despite a manual browser test
+            // once reaching real content in ~60-70s -- one prior data
+            // point turned out not to bound the real distribution of
+            // this app's own cold-start time (a heavier requirements.txt
+            // -- crim_intervals, music21, verovio, PatternFinder from
+            // git -- can plausibly need a slower rebuild sometimes, not
+            // just a container resume). Logging status every 15s and
+            // saving a screenshot on failure so a NEXT timeout (if any)
+            // is diagnosable from the workflow's own artifacts, without
+            // another manual log round-trip.
+            const start = Date.now();
+            const logProgress = setInterval(() => {
+              console.log(`  ...still waiting, ${Math.round((Date.now() - start) / 1000)}s elapsed`);
+            }, 15000);
+
             try {
-              await target.waitFor({ state: 'visible', timeout: 120000 });
-              console.log('SUCCESS: real app content loaded -- app is awake.');
+              const target = page.getByText('Renaissance Polyphony Research Toolkit');
+              await target.waitFor({ state: 'visible', timeout: 360000 });
+              clearInterval(logProgress);
+              console.log(`SUCCESS: real app content loaded after ${Math.round((Date.now() - start) / 1000)}s -- app is awake.`);
             } catch (e) {
-              console.log('FAILED: app content never appeared within 120s.');
+              clearInterval(logProgress);
+              console.log(`FAILED: app content never appeared within 360s. Page title was: "${await page.title()}"`);
+              await page.screenshot({ path: 'failure.png', fullPage: true });
               await browser.close();
               process.exit(1);
             }
@@ -89,3 +109,11 @@ jobs:
           })();
           EOF
           node wake.js
+
+      - name: Upload failure screenshot
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wake-failure-screenshot
+          path: failure.png
+          retention-days: 5
