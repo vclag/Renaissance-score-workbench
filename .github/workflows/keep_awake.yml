@@ -2,29 +2,42 @@ name: Keep App Awake
 
 # Streamlit Community Cloud's free tier puts an app to sleep after a
 # period with no incoming traffic -- the next visitor then has to wait
-# through a ~30-60s cold start (see README's own "first load after a
-# quiet spell" note). A scheduled HTTP GET is the standard, widely-used
-# fix: it's genuine inbound traffic, which is what actually resets
-# Streamlit Cloud's idle timer, not a full interactive browser session
-# specifically. Every 6 hours is a comfortable safety margin under
-# whatever the real sleep threshold is (not precisely documented by
-# Streamlit, community reports range from about a day to about a week
-# of total silence).
+# through a real cold start.
 #
-# A plain `curl -L` (no cookies) FAILS here -- confirmed directly, not
-# assumed: this app's own URL redirects through Streamlit Cloud's own
-# visitor-identification flow (app -> share.streamlit.io/-/auth/app ->
-# a one-time /-/login?payload=... URL -> back to the app), which sets a
-# cookie to remember "this visitor already passed through". Without a
-# cookie jar to accept and resend it, every hop looks like a brand-new
-# visitor and the redirect never terminates -- curl gives up after its
-# default 50-redirect cap with exit code 47 ("too many redirects"),
-# which is exactly what run #1 of this workflow hit in practice before
-# this fix (-c/-b below to persist cookies across the redirect chain,
-# confirmed directly to resolve in 3 redirects and a real 200 instead).
+# ---------------------------------------------------------------------
+# REVISION 2, replacing the plain-curl version: confirmed directly
+# (2026-09-11, via a real browser visit while the app was asleep) that
+# the curl-based version below was NOT actually working, despite every
+# scheduled run reporting HTTP 200 success for two days straight. Root
+# cause: the sleeping-app page Streamlit Cloud serves is a JavaScript
+# single-page app -- on a real visit it runs through a state machine
+# (`INITIAL -> ... -> BOOTING -> ready`, watched directly in the
+# browser console) driven by a SEQUENCE of its own API calls
+# (`/api/v2/app/disambiguate`, `/api/v2/app/context`,
+# `POST /api/v1/app/event/open`, `/api/v2/app/status`) that only fire
+# once that JS actually executes. `curl`, even with cookies handled
+# correctly (revision 1's own fix), only ever fetches the static HTML/
+# CSS/JS shell of that same page -- it never executes the JavaScript,
+# so it never fires the real wake sequence. Every prior "successful"
+# run was curl faithfully re-downloading the sleeping-app placeholder,
+# not a real visitor keeping the app alive -- which is exactly why the
+# user found it asleep despite 10/10 green runs.
+#
+# Fix: a real (headless) browser via Playwright, which runs the actual
+# JS and therefore the actual wake sequence, the same as any real
+# visitor's browser. Confirmed directly this time: navigating with a
+# real browser to the sleeping app took ~60-70s to reach genuine
+# rendered content (the page's own title and body text), not just an
+# HTTP 200 -- this workflow waits for that same real content, not a
+# status code, before calling itself successful.
+# ---------------------------------------------------------------------
+#
+# Every 6 hours is a comfortable safety margin under whatever the real
+# sleep threshold is (not precisely documented by Streamlit, community
+# reports range from about a day to about a week of total silence).
 #
 # Free to run indefinitely: GitHub Actions minutes are unlimited for
-# public repos, and this job takes seconds.
+# public repos; a headless Chromium run here takes well under a minute.
 
 on:
   schedule:
@@ -35,10 +48,44 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping the app to keep Streamlit Cloud from putting it to sleep
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright (Chromium only)
         run: |
-          curl -sSL --max-time 60 \
-            -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" \
-            -c cookies.txt -b cookies.txt \
-            -o /dev/null -w "HTTP %{http_code}, %{num_redirects} redirects, %{time_total}s\n" \
-            "https://renaissance-polyphony-research-toolkit.streamlit.app/"
+          npm init -y > /dev/null
+          npm install playwright@1.48.0 > /dev/null
+          npx playwright install --with-deps chromium
+
+      - name: Visit the app with a real browser and wait for it to actually wake up
+        run: |
+          cat > wake.js << 'EOF'
+          const { chromium } = require('playwright');
+
+          (async () => {
+            const browser = await chromium.launch();
+            const page = await browser.newPage();
+            const url = 'https://renaissance-polyphony-research-toolkit.streamlit.app/';
+
+            console.log(`Visiting ${url} ...`);
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+            // The real app's own title (this app's st.title() text) only
+            // renders once Streamlit Cloud's wake sequence has actually
+            // finished spinning the container back up -- waiting for
+            // this, not for any particular HTTP status code, is what
+            // actually confirms a real wake, not just a page load.
+            const target = page.getByText('Renaissance Polyphony Research Toolkit');
+            try {
+              await target.waitFor({ state: 'visible', timeout: 120000 });
+              console.log('SUCCESS: real app content loaded -- app is awake.');
+            } catch (e) {
+              console.log('FAILED: app content never appeared within 120s.');
+              await browser.close();
+              process.exit(1);
+            }
+            await browser.close();
+          })();
+          EOF
+          node wake.js
