@@ -77,30 +77,44 @@ jobs:
             // this, not for any particular HTTP status code, is what
             // actually confirms a real wake, not just a page load.
             //
-            // Timeout raised 120s -> 360s after a real run timed out at
-            // 120s (2026-09-11, run #40) despite a manual browser test
-            // once reaching real content in ~60-70s -- one prior data
-            // point turned out not to bound the real distribution of
-            // this app's own cold-start time (a heavier requirements.txt
-            // -- crim_intervals, music21, verovio, PatternFinder from
-            // git -- can plausibly need a slower rebuild sometimes, not
-            // just a container resume). Logging status every 15s and
-            // saving a screenshot on failure so a NEXT timeout (if any)
-            // is diagnosable from the workflow's own artifacts, without
-            // another manual log round-trip.
+            // Timeout raised again, 360s -> 600s, after EVERY scheduled
+            // run from 2026-09-11 10:48 (run #40) through 2026-09-17
+            // (run #66 -- 27 consecutive failures) timed out at 360s.
+            // Confirmed directly this was a real cold-start-duration
+            // problem, not a detection bug: downloaded one failure run's
+            // own screenshot artifact (via the authenticated Actions
+            // API) and it shows the app FULLY LOADED with the exact
+            // expected title -- the wake genuinely succeeds, just slower
+            // than 360s now. Timing lines up with the manual Streamlit
+            // Cloud reboot done the same day (this project's own session
+            // record) to clear an unrelated Verovio rendering hang --
+            // plausibly a slower rebuild/cache-cold environment since
+            // that reboot, not a one-off blip (persisted a full week of
+            // runs). 600s gives real margin over the ~360-400s this app
+            // now appears to need.
+            //
+            // Logging status every 15s and saving a screenshot on failure
+            // so a NEXT timeout (if any) is diagnosable from the
+            // workflow's own artifacts, without another manual log
+            // round-trip.
             const start = Date.now();
             const logProgress = setInterval(() => {
               console.log(`  ...still waiting, ${Math.round((Date.now() - start) / 1000)}s elapsed`);
             }, 15000);
 
             try {
-              const target = page.getByText('Renaissance Polyphony Research Toolkit');
-              await target.waitFor({ state: 'visible', timeout: 360000 });
+              // .first() defends against a strict-mode-violation
+              // exception (not a timeout) if the text ever matches more
+              // than one element (e.g. a hidden loading placeholder
+              // sharing the same title) -- narrows to one match without
+              // changing what "success" means here.
+              const target = page.getByText('Renaissance Polyphony Research Toolkit').first();
+              await target.waitFor({ state: 'visible', timeout: 600000 });
               clearInterval(logProgress);
               console.log(`SUCCESS: real app content loaded after ${Math.round((Date.now() - start) / 1000)}s -- app is awake.`);
             } catch (e) {
               clearInterval(logProgress);
-              console.log(`FAILED: app content never appeared within 360s. Page title was: "${await page.title()}"`);
+              console.log(`FAILED: app content never appeared within 600s. Page title was: "${await page.title()}". Error: ${e.message}`);
               await page.screenshot({ path: 'failure.png', fullPage: true });
               await browser.close();
               process.exit(1);
