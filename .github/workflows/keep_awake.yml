@@ -71,50 +71,65 @@ jobs:
             console.log(`Visiting ${url} ...`);
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-            // The real app's own title (this app's st.title() text) only
-            // renders once Streamlit Cloud's wake sequence has actually
-            // finished spinning the container back up -- waiting for
-            // this, not for any particular HTTP status code, is what
-            // actually confirms a real wake, not just a page load.
+            // ---------------------------------------------------------
+            // REVISION 3: the REAL bug, found 2026-09-17 after raising
+            // the timeout (360s -> 600s, see git history) made literally
+            // NO difference -- every run still failed at exactly the new
+            // timeout, with the failure screenshot STILL showing the app
+            // fully, correctly loaded. That contradiction (content is
+            // there, wait never resolves, no matter how long) meant this
+            // was never a slow-cold-start problem -- confirmed directly
+            // by inspecting the live app's DOM (Claude Browser tool):
+            // the app's real content -- including this exact title text
+            // -- lives inside a same-origin IFRAME
+            // (`https://<app>/~/+/`), not the top-level document.
+            // `page.getByText()` only ever searches the main frame, so
+            // it was NEVER going to find this text, at any timeout
+            // length -- every "failure" since the 2026-09-11 reboot
+            // (which apparently changed Streamlit Cloud's serving
+            // architecture for this app to this iframe-wrapped form)
+            // was this same structural miss, not a real problem with the
+            // app or its wake time.
             //
-            // Timeout raised again, 360s -> 600s, after EVERY scheduled
-            // run from 2026-09-11 10:48 (run #40) through 2026-09-17
-            // (run #66 -- 27 consecutive failures) timed out at 360s.
-            // Confirmed directly this was a real cold-start-duration
-            // problem, not a detection bug: downloaded one failure run's
-            // own screenshot artifact (via the authenticated Actions
-            // API) and it shows the app FULLY LOADED with the exact
-            // expected title -- the wake genuinely succeeds, just slower
-            // than 360s now. Timing lines up with the manual Streamlit
-            // Cloud reboot done the same day (this project's own session
-            // record) to clear an unrelated Verovio rendering hang --
-            // plausibly a slower rebuild/cache-cold environment since
-            // that reboot, not a one-off blip (persisted a full week of
-            // runs). 600s gives real margin over the ~360-400s this app
-            // now appears to need.
-            //
-            // Logging status every 15s and saving a screenshot on failure
-            // so a NEXT timeout (if any) is diagnosable from the
-            // workflow's own artifacts, without another manual log
-            // round-trip.
+            // Fix: search EVERY frame (main + iframes), not just the
+            // main page -- robust regardless of whether Streamlit Cloud
+            // wraps the app in an iframe or not (a detail of their own
+            // platform, not something this workflow should have to
+            // assume stays fixed).
+            const TARGET_TEXT = 'Renaissance Polyphony Research Toolkit';
+            const TIMEOUT_MS = 600000;
             const start = Date.now();
+
+            async function findVisibleAcrossFrames() {
+              for (const frame of page.frames()) {
+                try {
+                  if (await frame.getByText(TARGET_TEXT).first().isVisible()) {
+                    return frame.url();
+                  }
+                } catch (e) {
+                  // a frame can detach/navigate mid-check -- just skip it
+                }
+              }
+              return null;
+            }
+
             const logProgress = setInterval(() => {
-              console.log(`  ...still waiting, ${Math.round((Date.now() - start) / 1000)}s elapsed`);
+              console.log(`  ...still waiting, ${Math.round((Date.now() - start) / 1000)}s elapsed (${page.frames().length} frame(s) currently)`);
             }, 15000);
 
-            try {
-              // .first() defends against a strict-mode-violation
-              // exception (not a timeout) if the text ever matches more
-              // than one element (e.g. a hidden loading placeholder
-              // sharing the same title) -- narrows to one match without
-              // changing what "success" means here.
-              const target = page.getByText('Renaissance Polyphony Research Toolkit').first();
-              await target.waitFor({ state: 'visible', timeout: 600000 });
-              clearInterval(logProgress);
-              console.log(`SUCCESS: real app content loaded after ${Math.round((Date.now() - start) / 1000)}s -- app is awake.`);
-            } catch (e) {
-              clearInterval(logProgress);
-              console.log(`FAILED: app content never appeared within 600s. Page title was: "${await page.title()}". Error: ${e.message}`);
+            let foundIn = null;
+            while (Date.now() - start < TIMEOUT_MS) {
+              foundIn = await findVisibleAcrossFrames();
+              if (foundIn) break;
+              await page.waitForTimeout(1000);
+            }
+            clearInterval(logProgress);
+
+            if (foundIn) {
+              console.log(`SUCCESS: real app content loaded after ${Math.round((Date.now() - start) / 1000)}s (found in frame: ${foundIn}) -- app is awake.`);
+            } else {
+              const frameUrls = page.frames().map(f => f.url()).join(', ');
+              console.log(`FAILED: app content never appeared within 600s in any frame. Page title was: "${await page.title()}". Frames seen: ${frameUrls}`);
               await page.screenshot({ path: 'failure.png', fullPage: true });
               await browser.close();
               process.exit(1);
