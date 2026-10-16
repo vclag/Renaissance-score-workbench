@@ -3608,7 +3608,7 @@ with tab_browse:
         )
 
     query = st.text_input(
-        'Search (partial words OK)',
+        'Free-text search (partial terms accepted)',
         key="browse_query",
         help='Matches any text in a result -- composer, title, movement, catalog year, anything '
              'shown, OR the source\'s own encoded id/filename (e.g. "Gloria_42", CRIM\'s '
